@@ -11,6 +11,7 @@ name = "bar"
 bitstream-io = "1.1" # For lzss compression
 thiserror = "1.0" # For easier errors
 indicatif = "0.16.2" # For progress bar display in benchmarks and tests
+clap = "2.33" # For binaries that take command line arguments
 
 [dev-dependencies]
 criterion = "0.3" # For benchmarking archive performance
@@ -21,7 +22,6 @@ harness = false
 
 [profile.bench]
 lto = true
-panic = 'abort'
 codegen-units = 1
 
 [profile.release]

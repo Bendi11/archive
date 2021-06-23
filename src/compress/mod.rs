@@ -7,18 +7,23 @@ pub mod lz77;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Optimize {
     /// Optimize for large files
-    Large,
+    Ultra,
+    /// Big files, not huge
+    High,
     /// Optimize for best performance across all files
     Average,
     /// Optimize for many small files
-    Small,
+    Less,
 }
 
-/// The `Compressor` trait allows an archive to use many different compression methods with one 
+/// The `Compressor` trait allows an archive to use many different compression methods with one
 /// simple API. It contains methods to compress and decompress data from types implementing
 /// `Read` and `Seek`.
 pub trait Compressor<R: Read + Seek> {
     type Error;
+
+    /// Get a name for the compression format
+    fn name() -> &'static str;
 
     /// Compress some input data and write the compressed output to a type implementing `Write`
     fn compress<W: Write>(reader: R, writer: &mut W, opts: Optimize) -> Result<(), Self::Error> {
@@ -44,7 +49,17 @@ pub trait Compressor<R: Read + Seek> {
         Ok(vec.into_inner())
     }
 
-    fn compress_progress<W: Write>(reader: R, writer: &mut W, opts: Optimize, prog: ProgressBar) -> Result<(), Self::Error>;
+    fn compress_progress<W: Write>(
+        reader: R,
+        writer: &mut W,
+        opts: Optimize,
+        prog: ProgressBar,
+    ) -> Result<(), Self::Error>;
 
-    fn decompress_progress<W: Write>(reader: R, writer: &mut W, opts: Optimize, prog: ProgressBar) -> Result<(), Self::Error>;
+    fn decompress_progress<W: Write>(
+        reader: R,
+        writer: &mut W,
+        opts: Optimize,
+        prog: ProgressBar,
+    ) -> Result<(), Self::Error>;
 }
