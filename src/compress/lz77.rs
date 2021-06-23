@@ -1,41 +1,41 @@
 //! Contains structs like the all-important [Archive] struct 
 
-use std::{io::{Read, Seek, SeekFrom, Write}, marker::PhantomData, u8};
+use std::{io::{Read, Seek, SeekFrom, Write}, u8};
+use indicatif::ProgressBar;
 use thiserror::Error;
 
-use bitstream_io::{BitRead, BitReader, BitWrite, BitWriter, Numeric};
-use std::convert::{TryFrom, TryInto};
+use bitstream_io::{BitRead, BitReader, BitWrite, BitWriter};
 
-use super::Optimize;
+use super::{Compressor, Optimize};
 
 trait ReadByteExt {
-    fn byte(&mut self) -> u8;
+    fn byte(&mut self) -> std::io::Result<u8>;
 
-    fn bytes_at(&mut self, pos: u64, len: u64) -> Vec<u8>;
+    fn bytes_at(&mut self, pos: u64, len: u64) -> std::io::Result<Vec<u8>>;
 
-    fn byte_at(&mut self, pos: u64) -> u8;
+    fn byte_at(&mut self, pos: u64) -> std::io::Result<u8>;
 }
 
 impl<R: Read + Seek> ReadByteExt for R {
     /// Read a single byte from the reader and return it
-    fn byte(&mut self) -> u8 {
+    fn byte(&mut self) -> std::io::Result<u8> {
         let mut buf = [0u8; 1];
-        self.read_exact(&mut buf).unwrap(); //Read the byte 
-        buf[0]
+        self.read_exact(&mut buf)?; //Read the byte 
+        Ok(buf[0])
     }
 
     /// Read a certain number of bytes from a position
-    fn bytes_at(&mut self, pos: u64, len: u64) -> Vec<u8> {
+    fn bytes_at(&mut self, pos: u64, len: u64) -> std::io::Result<Vec<u8>> {
         let mut out = vec![0u8 ; len as usize];
-        self.seek(SeekFrom::Start(pos)).unwrap();
-        self.read_exact(&mut out).unwrap(); //Read the bytes into the output
-        out
+        self.seek(SeekFrom::Start(pos))?;
+        self.read_exact(&mut out)?; //Read the bytes into the output
+        Ok(out)
     }
     
     /// Read a single byte at a certain position, and leave the current reader position there
     #[inline]
-    fn byte_at(&mut self, pos: u64) -> u8 {
-        self.seek(SeekFrom::Start(pos)).unwrap(); //Seek to the position
+    fn byte_at(&mut self, pos: u64) -> std::io::Result<u8> {
+        self.seek(SeekFrom::Start(pos))?; //Seek to the position
         self.byte()
     }
 
@@ -74,7 +74,7 @@ impl<R: Read + Seek> Lz77<R> {
             let (off, matchlen) = self.longest_match(pos); //Get the best match in the previous data
             out.push(off); //Write the 0 offset
             if off == 0 {
-                out.push(self.data.byte_at(pos)); //Write the byte literal
+                out.push(self.data.byte_at(pos).unwrap()); //Write the byte literal
                 pos += 1;
             }
             else {
@@ -96,12 +96,12 @@ impl<R: Read + Seek> Lz77<R> {
             let (off, matchlen) = self.longest_match(pos); //Get the best match in the previous data
             if off == 0 {
                 out.push_str("(0)");
-                out.push(self.data.byte_at(pos) as char);
+                out.push(self.data.byte_at(pos).unwrap() as char);
                 out.push(' ');
                 pos += 1;
             }
             else {
-                out.push_str(&*format!("({}, {}):({}) ", off, matchlen, String::from_utf8(self.data.bytes_at(pos - off as u64, matchlen as u64)).unwrap()));
+                out.push_str(&*format!("({}, {}):({}) ", off, matchlen, String::from_utf8(self.data.bytes_at(pos - off as u64, matchlen as u64).unwrap()).unwrap()));
                 pos += matchlen as u64;
             }
         }
@@ -115,7 +115,7 @@ impl<R: Read + Seek> Lz77<R> {
         let mut pos = 0u64;
         let len = self.len();
         while pos + 1 < len {
-            let (first, second) = (self.data.byte(), self.data.byte());
+            let (first, second) = (self.data.byte().unwrap(), self.data.byte().unwrap());
             pos += 2;
             match (first, second) {
                 //Null pointer, byte literal
@@ -174,7 +174,7 @@ impl<R: Read + Seek> Lz77<R> {
 
         while off < pos 
             && pos < self.len()
-            && self.data.byte_at(off) == self.data.byte_at(pos)
+            && self.data.byte_at(off).unwrap() == self.data.byte_at(pos).unwrap()
             && len < u8::MAX {
                 pos += 1;
                 off += 1;
@@ -187,37 +187,31 @@ impl<R: Read + Seek> Lz77<R> {
 }
 
 
-
 /// The `LzSS` struct compresses any type that implements the `Read` and `Seek` traits using the lzss compression
 /// algorithm. It has a selectable window size and requires bitwise I/O for compression and decompression,
 /// but can often compress more than lz77
-pub struct LzSS<R: Read + Seek, Window: Numeric + TryFrom<usize> + std::ops::AddAssign<Window> + TryInto<usize> = u32>
-where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
-<Window as TryInto<usize>>::Error: std::fmt::Display + std::fmt::Debug {
+pub struct LzSS<R: Read + Seek> {
     /// The input buffer that we are compressing
     data: R,
-
-    /// We need phantom data because the Window type isn't used in any field
-    _phantom: PhantomData<Window>,
 }
 
 /// Any error that can occur when compressing or decompressing with the [LzSS] algorithm
 #[derive(Error, Debug)]
 pub enum LzSSErr {
     #[error("An internal Input/Output error occurred")]
-    IO(#[from] std::io::Error)
+    IO(#[from] std::io::Error),
+
+    #[error("An invalid pointer value was detected")]
+    InvalidPointer,
 }
 
 type LzSSResult<T> = Result<T, LzSSErr>;
 
-impl<R: Read + Seek, Window: Numeric + TryFrom<usize> + std::ops::AddAssign<Window> + TryInto<usize>> LzSS<R, Window>
-where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
-<Window as TryInto<usize>>::Error: std::fmt::Display + std::fmt::Debug {
+impl<R: Read + Seek> LzSS<R> {
     /// Create a new Lz77 compressor from an input reader
     pub fn new(data: R) -> Self {
         Self {
             data,
-            _phantom: PhantomData
         }
     }
 
@@ -229,23 +223,26 @@ where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
     }
 
     /// Compress the input reader into a vector of bytes
-    pub fn compress<W: Write>(&mut self, writer: &mut W, opt: Optimize) -> LzSSResult<()> {
+    pub fn compress<W: Write>(&mut self, writer: &mut W, opt: Optimize, progress: ProgressBar) -> LzSSResult<()> {
         let mut out = BitWriter::endian(writer, bitstream_io::LittleEndian); //Create an output buffer
 
         let mut pos = 0u64;  //Start at byte 0
         let len = self.len()?;
+        progress.set_length(len);
         while pos < len {
-            let (off, matchlen) = self.longest_match(pos)?; //Get the best match in the previous data
-            if off == 0.try_into().unwrap() {
+            let (off, matchlen) = self.longest_match(pos, opt)?; //Get the best match in the previous data
+            if off == 0 {
                 out.write_bit(true)?; //Write that this is a literal
-                out.write::<u8>(8, self.data.byte_at(pos))?; //Write the byte literal
+                out.write::<u8>(8, self.data.byte_at(pos)?)?; //Write the byte literal
                 pos += 1;
+                progress.inc(1);
             }
             else {
                 out.write_bit(false)?; //Indicate that this is a pointer
-                out.write::<Window>(Window::bits_size(), off)?;
-                out.write::<Window>(Window::bits_size(), matchlen)?;
-                pos += matchlen.try_into().unwrap() as u64;
+                out.write::<u16>(Self::opt_bitsize(opt), off)?;
+                out.write::<u16>(Self::opt_bitsize(opt), matchlen)?;
+                pos += matchlen as u64;
+                progress.inc(matchlen as u64);
             }
         }
 
@@ -260,16 +257,16 @@ where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
         let mut pos = 0u64;  //Start at byte 0
         let len = self.len()?;
         while pos < len {
-            let (off, matchlen) = self.longest_match(pos)?; //Get the best match in the previous data
-            if off == 0.try_into().unwrap() {
+            let (off, matchlen) = self.longest_match(pos, Optimize::Average)?; //Get the best match in the previous data
+            if off == 0 {
                 out.push_str("(1)");
-                out.push(self.data.byte_at(pos) as char);
+                out.push(self.data.byte_at(pos)? as char);
                 out.push(' ');
                 pos += 1;
             }
             else {
-                out.push_str(&*format!("(0)({}, {}):({}) ", off.try_into().unwrap(), matchlen.try_into().unwrap(), String::from_utf8(self.data.bytes_at(pos - off.try_into().unwrap() as u64, matchlen.try_into().unwrap() as u64)).unwrap()));
-                pos += matchlen.try_into().unwrap() as u64;
+                out.push_str(&*format!("(0)({}, {}):({}) ", off, matchlen, String::from_utf8(self.data.bytes_at(pos - off as u64, matchlen as u64)?).unwrap()));
+                pos += matchlen as u64;
             }
         }
 
@@ -277,7 +274,8 @@ where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
     }
 
     /// Return the bitsizes for a given optimization level
-    fn opt_bitsize(opt: &Optimize) -> u32 {
+    #[inline(always)]
+    fn opt_bitsize(opt: Optimize) -> u32 {
         match opt {
             Optimize::Large => 16, //65536B window size for large files
             Optimize::Average => 15, //32768B for average files
@@ -287,16 +285,20 @@ where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
 
     /// Get the maximum value for a given optimization level, this is used to determine window size
     #[inline(always)]
-    fn opt_max(opt: &Optimize) -> usize {
+    fn opt_max(opt: Optimize) -> usize {
         2usize.pow(Self::opt_bitsize(opt)) - 1
     }
 
     /// Decompress the input data, assumes that it is valid Lz77 format
-    pub fn decompress<W: Write + Read + Seek>(&mut self, out: &mut W) -> LzSSResult<()> {
+    pub fn decompress<W: Write>(&mut self, out: &mut W, opt: Optimize, progress: ProgressBar) -> LzSSResult<()> {
+        const MAX_SIZE: usize = u16::MAX as usize;
+        let mut window = vec![0u8 ; MAX_SIZE]; //Get a window buffer for replacements
+        //let out_len = 0usize; //The length of the output in bytes
         let mut pos = 0u64; 
-        let mut out_len = 0usize; //The length of the output in bytes
 
-        let len = self.len()? * 8;
+        let len = self.len()? * 8; 
+        progress.set_length(len / 8); //Set the length of the progress bar
+        
         self.data.seek(SeekFrom::Start(0))?;
 
         let mut bits = BitReader::endian(&mut self.data, bitstream_io::LittleEndian);
@@ -306,85 +308,83 @@ where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
             match sign {
                 true => {
                     let literal = bits.read::<u8>(8).unwrap(); //Read the raw byte
-                    out.write(&[literal]);
-                    out_len += 1;
+                    out.write(&[literal])?;
+                    window.push(literal);
+                    
+                    progress.inc(1); //Increment one byte
                     pos += 8;
                 },
                 false => {  
-                    let (offset, match_len) = (bits.read::<Window>(Window::bits_size())?, bits.read::<Window>(Window::bits_size())?);
-                    let offset = offset.try_into().unwrap();
-                    let mut match_len = match_len.try_into().unwrap();
-                    pos += (Window::bits_size() * 2) as u64;
+                    let (offset, mut match_len) = (bits.read::<u16>(Self::opt_bitsize(opt))?, bits.read::<u16>(Self::opt_bitsize(opt))?);
+                    pos += (Self::opt_bitsize(opt) * 2) as u64;
 
-                    let offpos = out_len - offset as usize;
+                    let offpos = window.len() - offset as usize;
                     let mut matching = Vec::new();
                     while match_len > 0 { 
                         if match_len >= offset {
                             match_len -= offset;
                             for i in offpos..(offpos + offset as usize) {
-                                matching.push(out.byte_at(i as u64))
-
+                                matching.push(window[i])
                             }
                         } else {
                             for i in offpos..(offpos + match_len as usize) {
-                                matching.push(out.byte_at(i as u64))
+                                matching.push(window[i])
+                                
                             }
                             break
                         }
                     }
-                    out.write_all(matching.as_ref());
-                    out_len += matching.len();
+                    progress.inc(matching.len() as u64);
+                    out.write_all(matching.as_ref())?;
+                    window.extend(matching.iter());
+                    //out_len += matching.len();
                 }
             }
+            //Truncate the window
+            let drain = window.drain(..(window.len() - MAX_SIZE));
+            drop(drain);
         }
-
         Ok(())
     }
 
     /// Search our window for the longest match and return the pair of (offset, len) or (0, 0) if there is no match
-    fn longest_match(&mut self, pos: u64) -> LzSSResult<(Window, Window)> {
-        let mut bestoff: Window = Window::try_from(0).unwrap(); //The best offset that we have found
-        let mut bestlen: Window = Window::try_from(0).unwrap();
+    fn longest_match(&mut self, pos: u64, opt: Optimize) -> LzSSResult<(u16, u16)> {
+        let mut bestoff = 0u16; //The best offset that we have found
+        let mut bestlen = 0u16;
         //Get the start position to seek to 
-        let start = if pos > self.max_window_val().try_into().unwrap() as u64 {
-            pos - self.max_window_val().try_into().unwrap() as u64
+        let start = if pos > Self::opt_max(opt) as u64 {
+            pos - Self::opt_max(opt) as u64
         } else {0};
 
         for off in start..pos {
-            let len = self.match_len(off, pos)?;
+            let len = self.match_len(off, pos, opt)?;
             if len > bestlen {
-                bestoff = Window::try_from((pos - off) as usize).unwrap();
+                bestoff = (pos - off) as u16;
                 bestlen = len;
             }
         }
 
         //If we don't break even, then return 0
-        Ok(if bestlen < Window::try_from((Window::bits_size() / 4 )as usize).unwrap() {
-            (Window::try_from(0).unwrap(), Window::try_from(0).unwrap())
+        Ok(if bestlen < (Self::opt_bitsize(opt) / 4 ) as u16 {
+            (0, 0)
         }
         else {(bestoff, bestlen)})
 
         
     }
 
-    /// Get the maximum value of the `Window` type
-    #[inline(always)]
-    fn max_window_val(&self) -> Window {
-        Window::try_from((2usize.pow(Window::bits_size()) - 1) as usize).unwrap()
-    }
-
     /// Return the number of bytes that match between the current offset and the position
-    fn match_len(&mut self, mut off: u64, mut pos: u64) -> LzSSResult<Window> {
+    fn match_len(&mut self, mut off: u64, mut pos: u64, opt: Optimize) -> LzSSResult<u16> {
         let old_pos = self.data.stream_position().unwrap(); //Get the current stream position to restore
-        let mut len = Window::try_from(0).unwrap(); //The length of the matched string
+        let mut len = 0u16; //The length of the matched string
 
         while off < pos 
             && pos < self.len()?
-            && self.data.byte_at(off) == self.data.byte_at(pos)
-            && len < self.max_window_val() {
+            && self.data.byte_at(off)? == self.data.byte_at(pos)?
+            && len < Self::opt_max(opt) as u16 {
                 pos += 1;
                 off += 1;
-                len += Window::try_from(1).unwrap();
+                len += 1;
         }
 
         self.data.seek(SeekFrom::Start(old_pos)).unwrap(); 
@@ -392,6 +392,20 @@ where <Window as TryFrom<usize>>::Error: std::fmt::Display + std::fmt::Debug,
     }
 }
 
-/// The `LzSSCompressor` is a simple facade struct that is used to give an implementation of [Compressor](super::Compressor) to the 
-/// [LzSS] struct, using optimization level enums instead of 
-pub struct LzSSCompressor();
+impl<R: Read + Seek> Compressor<R> for LzSS<R> {
+    type Error = LzSSErr;
+
+    #[inline]
+    fn compress_progress<W: Write>(reader: R, writer: &mut W, opts: Optimize, p: ProgressBar) -> Result<(), Self::Error> {
+        let mut me = Self::new(reader);
+        me.compress(writer, opts, p)?;
+        Ok(())
+    }
+
+    #[inline]
+    fn decompress_progress<W: Write>(reader: R, writer: &mut W, opts: Optimize, p: ProgressBar) -> Result<(), Self::Error> {
+        let mut me = Self::new(reader);
+        me.decompress(writer, opts, p)?;
+        Ok(())
+    }
+}

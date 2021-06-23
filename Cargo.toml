@@ -1,11 +1,30 @@
 [package]
-name = "archive"
+name = "bar"
 version = "0.1.0"
 authors = ["Bendi11 <bkliebmann@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "bar"
 
 [dependencies]
 bitstream-io = "1.1" # For lzss compression
 thiserror = "1.0" # For easier errors
+indicatif = "0.16.2" # For progress bar display in benchmarks and tests
+
+[dev-dependencies]
+criterion = "0.3" # For benchmarking archive performance
+
+[[bench]]
+name = "lz"
+harness = false
+
+[profile.bench]
+lto = true
+panic = 'abort'
+codegen-units = 1
+
+[profile.release]
+lto = true
+panic = 'abort'
+codegen-units = 1
