@@ -1,9 +1,17 @@
 use bar::ar::{Bar, BarResult};
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand, crate_version};
-use std::{fs::{self, File}, io::{BufReader, BufWriter}, path::Path};
+use std::{fs, path::Path};
+
+/// Validator for path inputs
+fn file_exists(s: String) -> Result<(), String> {
+    match Path::new(&s).exists() {
+        true => Ok(()),
+        false => Err(format!("The file or directory at {} does not exist", s))
+    }
+}
 
 /// Create the `pack` subcommand
-fn pack_subcommand() -> clap::App<'static, 'static> {
+fn pack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("pack")
         .about("Pack a directory into an archive")
         .alias("p")
@@ -14,10 +22,7 @@ fn pack_subcommand() -> clap::App<'static, 'static> {
             .long("input-dir")
             .short("i")
             .help("Choose a full or relative path to the directory that will be compressed into an archive")
-            .validator(|s| match Path::new(&s).exists() {
-                true => Ok(()),
-                false => Err(format!("The input directory at {} does not exist", s))
-            })
+            .validator(file_exists)
         )   
         .arg(Arg::with_name("output-file")
             .required(true)
@@ -29,15 +34,43 @@ fn pack_subcommand() -> clap::App<'static, 'static> {
         )
 }
 
+fn unpack_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("unpack")
+        .alias("u")
+        .about("Unpack a .bar archive into a directory")
+        .arg(Arg::with_name("input-file")
+            .help("Select a full or relative path to an input bar archive")
+            .required(true)
+            .takes_value(true)
+            .multiple(false)
+            .validator(file_exists)
+            .long("input-file")
+            .short("i")
+        )
+        .arg(Arg::with_name("output-dir")
+            .help("Select a full or relative path to the output directory where a directory containing the unpacked contents will go")
+            .takes_value(true)
+            .multiple(false)
+            .required(true)
+            .long("output-dir")
+            .short("o")
+        )
+}
+
 fn main() {
     let app = App::new("bar")
         .about("Utitility to pack, unpack, and manipulate .bar archives")
         .author("Bendi11")
         .version(crate_version!())
-        .subcommand(pack_subcommand());
+        .setting(AppSettings::WaitOnError)
+        .subcommand(pack_subcommand())
+        .subcommand(unpack_subcommand())
+    ;
+
     let matches = app.get_matches(); 
     match matches.subcommand() {
         ("pack", Some(args)) => pack(args).unwrap(),
+        ("unpack", Some(args)) => unpack(args).unwrap(),
         _ => ()
     }
 }
@@ -54,6 +87,16 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
 
     let mut barchiver = Bar::pack(input_dir, back)?; //Pack the directory into a main file
     barchiver.write(&mut output)?;
+
+    Ok(())
+}
+
+/// Unpack an archive to a directory
+fn unpack(args: &ArgMatches) -> BarResult<()> {
+    let input_file = args.value_of("input-file").unwrap();
+    let output_dir = args.value_of("output-dir").unwrap();
+    let mut barchiver = Bar::unpack(input_file)?; //Pack the directory into a main file
+    barchiver.save_unpacked(output_dir)?;
 
     Ok(())
 }
