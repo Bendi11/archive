@@ -107,6 +107,52 @@ impl Dir {
             } ).collect::<Result<HashMap<String, Entry>, _>>()?
         }))
     }
+
+    /// Add an entry to the directory using its name
+    pub fn add_entry(&mut self, entry: Entry) {
+        self.data.insert(entry.name(), entry);
+    }
+
+    fn get_entry<'a>(
+        &self,
+        mut paths: impl Iterator<Item = path::Component<'a>>,
+    ) -> Option<&Entry> {
+        match paths.next() {
+            //If there is still more paths to follow, make sure we are a directory and get the nested entries
+            Some(path) => self
+                .data
+                .get(path.as_os_str().to_str().unwrap())?
+                .get_entry(paths),
+            //If this is the end of the path, then return self
+            None => None,
+        }
+    }
+
+    fn get_entry_mut<'a>(
+        &mut self,
+        mut paths: impl Iterator<Item = path::Component<'a>>,
+    ) -> Option<&mut Entry> {
+        match paths.next() {
+            //If there is still more paths to follow, make sure we are a directory and get the nested entries
+            Some(path) => self
+                .data
+                .get_mut(path.as_os_str().to_str().unwrap())?
+                .get_entry_mut(paths),
+            //If this is the end of the path, then return self
+            None => None,
+        }
+    }
+
+
+    #[inline]
+    pub fn entry<'a>(&self, paths: impl AsRef<path::Path>) -> Option<&Entry> {
+        self.get_entry(paths.as_ref().components())
+    }
+    #[inline]
+    pub fn entry_mut<'a>(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
+        self.get_entry_mut(paths.as_ref().components())
+    }
+
 }
 
 /// The `Entry` struct represents one entry in the bar archive. It is the end result of parsing a
@@ -147,6 +193,27 @@ impl Entry {
         }
     }
 
+    pub const fn as_dir(&self) -> Option<&Dir> {
+        match self {
+            Self::Dir(dir) => Some(dir),
+            _ => None
+        }
+    }
+
+    pub fn as_dir_mut(&mut self) -> Option<&mut Dir> {
+        match self {
+            Self::Dir(dir) => Some(dir),
+            _ => None
+        }
+    }
+
+    pub const fn as_file(&self) -> Option<&File> {
+        match self {
+            Self::File(file) => Some(file),
+            _ => None
+        }
+    }
+        
     /// Get the name of this file or directory
     #[inline(always)]
     pub fn name(&self) -> String {
