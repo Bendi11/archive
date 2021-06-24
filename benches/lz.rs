@@ -1,4 +1,7 @@
-use bar::compress::{Compressor, Optimize, lz77::{Lz77, LzSS}};
+use bar::compress::{
+    lz77::{Lz77, LzSS},
+    Compressor, Optimize,
+};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::io::Cursor;
 

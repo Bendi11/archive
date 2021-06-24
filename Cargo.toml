@@ -8,10 +8,16 @@ edition = "2018"
 name = "bar"
 
 [dependencies]
-bitstream-io = "1.1" # For lzss compression
 thiserror = "1.0" # For easier errors
 indicatif = "0.16.2" # For progress bar display in benchmarks and tests
 clap = "2.33" # For binaries that take command line arguments
+byteorder = "1.4" # For reading u16s and u32s in an easier and platform agnostic way
+bitfield = "0.13" # For bitfields in archive file headers
+chrono = "0.4" # For file timestamps
+
+rmp = "0.8" # For header messagepack se/de serializing
+rmpv = "0.4" # For heeader messagepack
+
 
 [dev-dependencies]
 criterion = "0.3" # For benchmarking archive performance
