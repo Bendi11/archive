@@ -97,7 +97,7 @@ impl<R: BufRead + Seek> Lz77<R> {
             } else {
                 writer.write_all(&[matchlen])?;
                 pos += matchlen as u64;
-                progress.inc(1);
+                progress.inc(matchlen as u64);
             }
         }
 
@@ -184,7 +184,7 @@ impl<R: BufRead + Seek> Lz77<R> {
 
     /// Search our window for the longest match and return the pair of (offset, len) or (0, 0) if there is no match
     #[inline]
-    fn longest_match(&mut self, pos: u64) -> LzResult<(u8, u8)> {
+    /*fn _longest_match(&mut self, pos: u64) -> LzResult<(u8, u8)> {
         //Get the start position to seek to
         let start = if pos > 255 {
             pos - 255
@@ -203,19 +203,53 @@ impl<R: BufRead + Seek> Lz77<R> {
         } else {
             (bestoff, bestlen)
         })
-    }
+    }*/
 
-    /// Return the number of matching bytes that match between the current offset and the position
-    fn match_len(&mut self, off: u64, pos: u64) -> LzResult<u8> {
-        let off_to_pos = pos - off;
+    /// Search our window for the longest match and return the pair of (offset, len) or (0, 0) if there is no match
+    #[inline]
+    fn longest_match(&mut self, pos: u64) -> LzResult<(u8, u8)> {
+        let mut bestoff = 0u8; //The best offset that we have found
+        let mut bestlen = 0u8;
+        //Get the start position to seek to
+        let start = if pos > 255 {
+            pos - 255
+        } else {
+            0
+        };
+
         let pos_read_len = if self.len < pos + 255 {
             self.len - pos
         } else { 255 };
+
+        let read = self.data.bytes_at(pos, pos_read_len)?; //Read the bytes after our index
+
+        for off in start..pos {
+            let len = self.match_len(off, pos, &read[..])?;
+            if len > bestlen {
+                bestoff = (pos - off) as u8;
+                bestlen = len;
+            }
+        }
+
+        //If we don't break even, then return 0
+        Ok(if bestlen < (8 / 4) as u8 {
+            (0, 0)
+        } else {
+            (bestoff, bestlen)
+        })
+    }
+
+    /// Return the number of bytes that match between the current offset and the position
+    fn match_len(&mut self, off: u64, pos: u64, read: &[u8]) -> LzResult<u8> {
+        let off_to_pos = pos - off;
+        /*let pos_read_len = if self.len < pos + max {
+            self.len - pos
+        } else { max };*/
         let window = self.data.bytes_at(pos, off_to_pos)?;
-        let read = self.data.bytes_at(pos, pos_read_len)?;
+        //let read = self.data.bytes_at(pos, pos_read_len)?;
 
         //Read bytes and compare them
-        Ok(window.iter().zip(read).take_while(|(left, right)| *left == right).count() as u8)
+        Ok(window.iter().zip(read).take_while(|(left, right)| left == right).count() as u8)
     }
 
 }
