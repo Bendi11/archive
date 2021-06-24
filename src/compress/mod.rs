@@ -1,4 +1,4 @@
-use std::io::{BufRead, Read, Seek, Write};
+use std::io::{BufRead, Seek, Write};
 
 use indicatif::ProgressBar;
 pub mod lz77;

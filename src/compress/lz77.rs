@@ -421,13 +421,29 @@ impl<R: BufRead + Seek> LzSS<R> {
             0
         };
 
+        let pos_read_len = if self.len < pos + max {
+            self.len - pos
+        } else { max };
+
+        let read = self.data.bytes_at(pos, pos_read_len)?; //Read the bytes after our index
+
         for off in start..pos {
-            let len = self.match_len(off, pos, max)?;
+            let len = self.match_len(off, pos, &read[..])?;
             if len > bestlen {
                 bestoff = (pos - off) as u16;
                 bestlen = len;
             }
         }
+        
+        /*for ( ((window_pos, window_byte), read_byte), off) in window.iter().enumerate().zip(read.iter()).zip(start..pos) {
+            if window_byte == read_byte {
+                let len = self.match_len(&window[0..window_pos], &read[..])?;
+                if len > bestlen {
+                    bestlen = len;
+                    bestoff = (pos - off) as u16;
+                }
+            }
+        }*/
 
         //If we don't break even, then return 0
         Ok(if bestlen < (bitsize / 4) as u16 {
@@ -438,32 +454,16 @@ impl<R: BufRead + Seek> LzSS<R> {
     }
 
     /// Return the number of bytes that match between the current offset and the position
-    fn match_len(&mut self, off: u64, pos: u64, max: u64) -> LzResult<u16> {
-        //let old_pos = self.data.stream_position().unwrap(); //Get the current stream position to restore
-        /*let mut len = 0u16; //The length of the matched string
-
-        while off < pos
-            && pos < self.len
-            && self.data.byte_at(off)? == self.data.byte_at(pos)?
-            && len < max as u16
-        {
-            pos += 1;
-            off += 1;
-            len += 1;
-        }
-
-        //self.data.seek(SeekFrom::Start(old_pos)).unwrap();
-        Ok(len)*/
-
+    fn match_len(&mut self, off: u64, pos: u64, read: &[u8]) -> LzResult<u16> {
         let off_to_pos = pos - off;
-        let pos_read_len = if self.len < pos + max {
+        /*let pos_read_len = if self.len < pos + max {
             self.len - pos
-        } else { max };
+        } else { max };*/
         let window = self.data.bytes_at(pos, off_to_pos)?;
-        let read = self.data.bytes_at(pos, pos_read_len)?;
+        //let read = self.data.bytes_at(pos, pos_read_len)?;
 
         //Read bytes and compare them
-        Ok(window.iter().zip(read).take_while(|(left, right)| *left == right).count() as u16)
+        Ok(window.iter().zip(read).take_while(|(left, right)| left == right).count() as u16)
     }
 }
 

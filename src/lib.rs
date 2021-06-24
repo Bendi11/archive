@@ -4,10 +4,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use std::{
     fs::File,
-    io::{BufReader, BufWriter, Cursor},
+    io::{BufReader, BufWriter},
 };
 
-fn main() {
+fn _main() {
     let file = BufReader::new(File::open("./Top Gear S11E01.mkv").unwrap());
     let mut out = BufWriter::new(File::create("./compressed.archive").unwrap());
     LzSS::compress_progress(
