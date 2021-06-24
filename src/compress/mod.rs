@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, Write};
+use std::io::{BufRead, Read, Seek, Write};
 
 use indicatif::ProgressBar;
 pub mod lz77;
@@ -19,7 +19,7 @@ pub enum Optimize {
 /// The `Compressor` trait allows an archive to use many different compression methods with one
 /// simple API. It contains methods to compress and decompress data from types implementing
 /// `Read` and `Seek`.
-pub trait Compressor<R: Read + Seek> {
+pub trait Compressor<R: BufRead + Seek> {
     type Error;
 
     /// Get a name for the compression format

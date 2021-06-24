@@ -1,10 +1,7 @@
 //! Contains structs like the all-important [Archive] struct
 
 use indicatif::ProgressBar;
-use std::{
-    io::{Read, Seek, SeekFrom, Write},
-    u8,
-};
+use std::{io::{BufRead, Read, Seek, SeekFrom, Write}, u8};
 use thiserror::Error;
 
 use bitstream_io::{BitRead, BitReader, BitWrite, BitWriter};
@@ -63,7 +60,7 @@ const fn opt_max(opt: Optimize) -> usize {
 
 /// The `Lz77` struct compresses any type that implements the `Read` and `Seek` traits using the lz77 compression
 /// algorithm
-pub struct Lz77<R: Read + Seek> {
+pub struct Lz77<R: BufRead + Seek> {
     /// The input buffer that we are compressing
     data: R,
 
@@ -71,7 +68,7 @@ pub struct Lz77<R: Read + Seek> {
     len: u64,
 }
 
-impl<R: Read + Seek> Lz77<R> {
+impl<R: BufRead + Seek> Lz77<R> {
     /// Create a new Lz77 compressor from an input reader
     pub fn new(mut data: R) -> Self {
         Self { len: Self::len(&mut data), data }
@@ -86,15 +83,13 @@ impl<R: Read + Seek> Lz77<R> {
 
     /// Compress the input reader into a vector of bytes
     pub fn compress(&mut self, writer: &mut impl Write, _opt: Optimize, progress: ProgressBar) -> LzResult<()> {
-        let mut out = Vec::new(); //Create an output buffer
-
         let mut pos = 0u64; //Start at byte 0
         let len = self.len;
         progress.set_length(len);
 
         while pos < len {
             let (off, matchlen) = self.longest_match(pos)?; //Get the best match in the previous data
-            out.push(off); //Write the 0 offset
+            writer.write_all(&[off])?;
             if off == 0 {
                 writer.write_all(&[self.data.byte_at(pos).unwrap()])?; //Write the byte literal
                 pos += 1;
@@ -190,22 +185,17 @@ impl<R: Read + Seek> Lz77<R> {
     /// Search our window for the longest match and return the pair of (offset, len) or (0, 0) if there is no match
     #[inline]
     fn longest_match(&mut self, pos: u64) -> LzResult<(u8, u8)> {
-        let mut bestoff = 0u8; //The best offset that we have found
-        let mut bestlen = 0u8;
         //Get the start position to seek to
         let start = if pos > 255 {
             pos - 255
         } else {
             0
         };
-
-        for off in start..pos {
-            let len = self.match_len(off, pos)?;
-            if len > bestlen {
-                bestoff = (pos - off) as u8;
-                bestlen = len;
-            }
-        }
+        let (bestlen, off) = (start..pos)
+            .map(|off| (self.match_len(off, pos).unwrap(), off))
+            .max_by(|(prev, _), (this, _)| prev.cmp(this))
+            .unwrap_or((0, 0));
+        let bestoff = (pos - off) as u8;
 
         //If we don't break even, then return 0
         Ok(if bestlen < (2) as u8 {
@@ -215,28 +205,22 @@ impl<R: Read + Seek> Lz77<R> {
         })
     }
 
-    /// Return the number of bytes that match between the current offset and the position
-    fn match_len(&mut self, mut off: u64, mut pos: u64) -> LzResult<u8> {
-        //let old_pos = self.data.stream_position().unwrap(); //Get the current stream position to restore
-        let mut len = 0u8; //The length of the matched string
+    /// Return the number of matching bytes that match between the current offset and the position
+    fn match_len(&mut self, off: u64, pos: u64) -> LzResult<u8> {
+        let off_to_pos = pos - off;
+        let pos_read_len = if self.len < pos + 255 {
+            self.len - pos
+        } else { 255 };
+        let window = self.data.bytes_at(pos, off_to_pos)?;
+        let read = self.data.bytes_at(pos, pos_read_len)?;
 
-        while off < pos
-            && pos < self.len
-            && self.data.byte_at(off)? == self.data.byte_at(pos)?
-            && len < 255
-        {
-            pos += 1;
-            off += 1;
-            len += 1;
-        }
-
-        //self.data.seek(SeekFrom::Start(old_pos)).unwrap();
-        Ok(len)
+        //Read bytes and compare them
+        Ok(window.iter().zip(read).take_while(|(left, right)| *left == right).count() as u8)
     }
 
 }
 
-impl<R: Read + Seek> Compressor<R> for Lz77<R> {
+impl<R: BufRead + Seek> Compressor<R> for Lz77<R> {
     fn name() -> &'static str {
         "lz77"
     }
@@ -258,7 +242,7 @@ impl<R: Read + Seek> Compressor<R> for Lz77<R> {
 /// The `LzSS` struct compresses any type that implements the `Read` and `Seek` traits using the lzss compression
 /// algorithm. It has a selectable window size and requires bitwise I/O for compression and decompression,
 /// but can often compress more than lz77
-pub struct LzSS<R: Read + Seek> {
+pub struct LzSS<R: BufRead + Seek> {
     /// The input buffer that we are compressing
     data: R,
 
@@ -278,7 +262,7 @@ pub enum LzErr {
 
 type LzResult<T> = Result<T, LzErr>;
 
-impl<R: Read + Seek> LzSS<R> {
+impl<R: BufRead + Seek> LzSS<R> {
     /// Create a new Lz77 compressor from an input reader
     pub fn new(mut data: R) -> Self {
         Self {
@@ -301,27 +285,27 @@ impl<R: Read + Seek> LzSS<R> {
         opt: Optimize,
         progress: ProgressBar,
     ) -> LzResult<()> {
-        let mut out = BitWriter::endian(progress.wrap_write(writer), bitstream_io::LittleEndian); //Create an output buffer
+        let mut out = BitWriter::endian(writer, bitstream_io::LittleEndian); //Create an output buffer
         
         let mut pos = 0u64; //Start at byte 0
         
         let bitsize = opt_bitsize(opt);
         let max = opt_max(opt);
         let len = self.len;
-        //progress.set_length(len);
+        progress.set_length(len);
         while pos < len {
             let (off, matchlen) = self.longest_match(pos, bitsize, max as u64)?; //Get the best match in the previous data
             if off == 0 {
                 out.write_bit(true)?; //Write that this is a literal
                 out.write::<u8>(8, self.data.byte_at(pos)?)?; //Write the byte literal
                 pos += 1;
-                //progress.inc(1);
+                progress.inc(1);
             } else {
                 out.write_bit(false)?; //Indicate that this is a pointer
                 out.write::<u16>(bitsize, off)?;
                 out.write::<u16>(bitsize, matchlen)?;
                 pos += matchlen as u64;
-                //progress.inc(matchlen as u64);
+                progress.inc(matchlen as u64);
             }
         }
 
@@ -454,9 +438,9 @@ impl<R: Read + Seek> LzSS<R> {
     }
 
     /// Return the number of bytes that match between the current offset and the position
-    fn match_len(&mut self, mut off: u64, mut pos: u64, max: u64) -> LzResult<u16> {
+    fn match_len(&mut self, off: u64, pos: u64, max: u64) -> LzResult<u16> {
         //let old_pos = self.data.stream_position().unwrap(); //Get the current stream position to restore
-        let mut len = 0u16; //The length of the matched string
+        /*let mut len = 0u16; //The length of the matched string
 
         while off < pos
             && pos < self.len
@@ -469,11 +453,21 @@ impl<R: Read + Seek> LzSS<R> {
         }
 
         //self.data.seek(SeekFrom::Start(old_pos)).unwrap();
-        Ok(len)
+        Ok(len)*/
+
+        let off_to_pos = pos - off;
+        let pos_read_len = if self.len < pos + max {
+            self.len - pos
+        } else { max };
+        let window = self.data.bytes_at(pos, off_to_pos)?;
+        let read = self.data.bytes_at(pos, pos_read_len)?;
+
+        //Read bytes and compare them
+        Ok(window.iter().zip(read).take_while(|(left, right)| *left == right).count() as u16)
     }
 }
 
-impl<R: Read + Seek> Compressor<R> for LzSS<R> {
+impl<R: BufRead + Seek> Compressor<R> for LzSS<R> {
     type Error = LzErr;
 
     fn name() -> &'static str {

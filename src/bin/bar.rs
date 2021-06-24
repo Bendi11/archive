@@ -1,6 +1,6 @@
 use bar::compress::{Compressor, Optimize, lz77::{Lz77, LzSS}};
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
-use std::{fs::File, io::BufReader, path::Path};
+use std::{fs::File, io::{BufReader, BufWriter}, path::Path};
 
 /// Compress a file to another file
 fn compress(args: &ArgMatches) {
@@ -8,7 +8,7 @@ fn compress(args: &ArgMatches) {
     let output = args.value_of("output-file").unwrap();
 
     let input = BufReader::new(File::open(input).unwrap());
-    let mut output = File::create(output).unwrap();
+    let mut output = BufWriter::new(File::create(output).unwrap());
 
     let opt = match args.value_of("compression-level").unwrap() {
         "ultra" => Optimize::Ultra,

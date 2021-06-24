@@ -26,7 +26,7 @@ fn lz_compress(c: &mut Criterion) {
         )
     });
 
-    c.bench_function("Lz77_compress", move |b| {
+    /*c.bench_function("Lz77_compress", move |b| {
         b.iter_with_setup(
             || (Lz77::new(Cursor::new(LOREMIPSUM)), Cursor::new(Vec::<u8>::new())),
             |(mut compressor, _)| {
@@ -35,7 +35,7 @@ fn lz_compress(c: &mut Criterion) {
                 )
             },
         )
-    });
+    }); */
 }
 
 criterion_group!(lz, lz_compress);
