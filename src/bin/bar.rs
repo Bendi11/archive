@@ -1,4 +1,4 @@
-use bar::compress::{Compressor, Optimize, lz77::LzSS};
+use bar::compress::{Compressor, Optimize, lz77::{Lz77, LzSS}};
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use std::{fs::File, io::BufReader, path::Path};
 
@@ -28,6 +28,7 @@ fn compress(args: &ArgMatches) {
 
     match args.value_of("compression-algorithm").unwrap() {
         "lzss" => LzSS::compress_progress(input, &mut output, opt, progress),
+        "lz77" => Lz77::compress_progress(input, &mut output, opt, progress),
         _ => unreachable!(),
     }.unwrap();
 }
