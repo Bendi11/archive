@@ -57,13 +57,13 @@ pub struct File {
     pub meta: Meta,
 
     /// The compression method of this file
-    pub compression: CompressMethod,
+    pub(crate) compression: CompressMethod,
 
     /// The offset into the file that this file's data is
-    pub off: u64,
+    pub(crate) off: u64,
 
     /// The size of this file in the file data section in bytes
-    pub size: u32,
+    pub(crate) size: u32,
 }
 
 impl File {
@@ -94,7 +94,7 @@ pub struct Dir {
     pub meta: Meta,
 
     /// The contained data of this `Dir`
-    pub data: HashMap<String, Entry>,
+    pub(crate) data: HashMap<String, Entry>,
 }
 
 impl Dir {
@@ -186,7 +186,7 @@ impl Entry {
     }
 
     /// Write file data to a writer, returning new headers with updated offsets
-    pub fn write_file_data<W: Write, R: Read + Seek>(&self, off: &mut u64, writer: &mut W, reader: &mut R) -> std::io::Result<Entry> {
+    pub(crate) fn write_file_data<W: Write, R: Read + Seek>(&self, off: &mut u64, writer: &mut W, reader: &mut R) -> std::io::Result<Entry> {
         match self {
             Self::Dir(dir) => dir.write_data(off, writer, reader),
             Self::File(file ) => file.write_data(off, writer, reader),
@@ -214,6 +214,14 @@ impl Entry {
         }
     }
         
+    pub fn as_file_mut(&mut self) -> Option<&mut File> {
+        match self {
+            Self::File(file) => Some(file),
+            _ => None
+        }
+    }
+     
+
     /// Get the name of this file or directory
     #[inline(always)]
     pub fn name(&self) -> String {
