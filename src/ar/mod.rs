@@ -104,62 +104,95 @@ impl Bar<std::fs::File> {
 }
 
 impl<S: Read + Write + Seek> Bar<S> {
-    /// Pack a directory into an archive
+    const METADATAFILENAME: &'static str = "-__META__.internaldata.msgpack";
+
+    fn pack_read_dir<W: Write>(dir: &std::path::Path, off: &mut u64, writer: &mut W) -> BarResult<Vec<Entry>> {
+        let mut vec = vec![];
+        let mut meta_vec = HashMap::new(); //A map of file or directory names to metadata structs
+
+        for file in std::fs::read_dir(dir)? {
+            let file = file?;
+            let name = file.file_name().to_str().unwrap().to_owned();
+
+            if name.ends_with(Self::METADATAFILENAME) {
+                let mut file = std::fs::File::open(file.path())?; //Open the metadata file 
+                let meta = rmpv::decode::read_value(&mut file)?; //Read the header value
+                let meta = Self::read_meta(&meta)?; 
+                meta_vec.insert(name, meta);
+                continue
+            }
+        }
+
+        for file in std::fs::read_dir(dir)? {
+            let file = file?;
+            let name = file.file_name().to_str().unwrap().to_owned();
+
+            if name.ends_with(Self::METADATAFILENAME) {
+                continue
+            }
+
+            let meta = match meta_vec.get(&name) {
+                Some(meta) => meta.clone(),
+                None => Meta {
+                    name: name.clone(),
+                    ..Default::default()
+                }
+            };
+
+            match file.metadata().unwrap().is_dir() {
+                true => {
+                    let directory = entry::Dir {
+                        meta,
+                        data: Self::pack_read_dir(&file.path(), off, writer)?.into_iter().map(|entry| (entry.name(), entry)).collect()
+                    };
+                    vec.push(Entry::Dir(directory));
+                    
+                },
+                false => {
+                    let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
+                    let size = data.metadata()?.len();
+                    
+                    let file = entry::File {
+                        compression: entry::CompressMethod::None,
+                        off: *off,
+                        size: size as u32,
+                        meta,
+                    };
+                    *off += size;
+                    std::io::copy(&mut data, writer)?;
+                    vec.push(Entry::File(file))
+                }
+            }
+        }
+        Ok(vec)
+    }
+
+    /// Pack a directory into an archive struct using a backing storage for file data
     pub fn pack(dir: impl AsRef<std::path::Path>, mut backend: S) -> BarResult<Self> {
         let dir = dir.as_ref();
         let mut off = 0u64; //The current offset into the backing storage
 
-        fn read_dir<W: Write>(dir: &std::path::Path, off: &mut u64, writer: &mut W) -> BarResult<Vec<Entry>> {
-            let mut vec = vec![];
-            for file in std::fs::read_dir(dir)? {
-                let file = file?;
-                let name = file.file_name().to_str().unwrap().to_owned();
-                match file.metadata().unwrap().is_dir() {
-                    true => {
-                        let directory = entry::Dir {
-                            meta: Meta {
-                                name: name.clone(),
-                                ..Default::default()
-                            },
-                            data: read_dir(&file.path(), off, writer)?.into_iter().map(|entry| (entry.name(), entry)).collect()
-                        };
-                        vec.push(Entry::Dir(directory));
-                        
-                    },
-                    false => {
-                        let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
-                        let size = data.metadata()?.len();
-                        
-                        let file = entry::File {
-                            compression: entry::CompressMethod::None,
-                            off: *off,
-                            size: size as u32,
-                            meta: Meta {
-                                name,
-                                ..Default::default()
-                            }
-                        };
-                        *off += size;
-                        std::io::copy(&mut data, writer)?;
-                        vec.push(Entry::File(file))
-                    }
-                }
+        let metafilenamne = dir.join(Self::METADATAFILENAME);
+        let meta = if metafilenamne.exists() {
+            let mut file = std::fs::File::open(metafilenamne)?; //Open the metadata file 
+            let meta = rmpv::decode::read_value(&mut file)?; //Read the header value
+            Self::read_meta(&meta)?
+        } else {
+            Meta {
+                name: dir.file_name().unwrap().to_str().unwrap().to_owned(),
+                ..Default::default()
             }
-            Ok(vec)
-        }
+        };
 
         Ok(Self { 
             header: Header {
-                meta: Meta {
-                    name: dir.file_name().unwrap().to_str().unwrap().to_owned(),
-                    ..Default::default()
-                },
+                meta,
                 root: entry::Dir {
                     meta: Meta {
                         name: "root".to_owned(),
                         ..Default::default()
                     },
-                    data: read_dir(dir, &mut off, &mut backend)?.into_iter().map(|entry| (entry.name(), entry)).collect()
+                    data: Self::pack_read_dir(dir, &mut off, &mut backend)?.into_iter().map(|entry| (entry.name(), entry)).collect()
                 }
             },
             data: backend,
@@ -237,6 +270,7 @@ impl<S: Read + Write + Seek> Bar<S> {
             Self::write_dir_entry(&header.root),
         ])
     }
+
 
     /// Unpack an archive file into a [Bar] struct
     pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
@@ -477,12 +511,15 @@ impl<S: Read + Write + Seek> Bar<S> {
         }
     }
 
+
     /// Save this archive to a directory without packing
     pub fn save_unpacked(&mut self, path: impl AsRef<std::path::Path>) -> BarResult<()> {
         let path = path.as_ref();
         let dir = path.join(self.header.meta.name.clone());
         std::fs::create_dir_all(dir.clone())?; //Create the dir to save unpacked files to
-        Self::save_meta_to_file(dir.as_ref(), &self.header.meta)?; //Save header metadata to a file
+
+        let metafile = dir.join(self.header.meta.name.clone());
+        Self::save_meta_to_file(metafile.as_ref(), &self.header.meta)?; //Save header metadata to a file
         for (_, entry) in self.header.root.data.iter() {
             Self::save_entry(dir.as_ref(), entry, &mut self.data)?;
         }
@@ -493,6 +530,8 @@ impl<S: Read + Write + Seek> Bar<S> {
     /// Save an entry to a file or to a folder if it is a [Dir](Entry::Dir)
     fn save_entry(dir: &std::path::Path, entry: &Entry, back: &mut S) -> BarResult<()> {
         let path = dir.join(entry.name());
+        Self::save_meta_to_file(&path, entry.meta())?;
+
         match entry {
             Entry::Dir(dir) => {
                 std::fs::create_dir_all(path.clone())?;
@@ -512,8 +551,8 @@ impl<S: Read + Write + Seek> Bar<S> {
         Ok(())
     }
 
-    fn save_meta_to_file(dir: &std::path::Path, meta: &Meta) -> BarResult<()> {
-        let path = dir.join("__META__.txt");
+    fn save_meta_to_file(filename: &std::path::Path, meta: &Meta) -> BarResult<()> {
+        let path = filename.with_file_name(filename.file_name().unwrap().to_str().unwrap().to_owned() + Self::METADATAFILENAME);
         let mut file = std::fs::File::create(path)?;
         let val = Self::write_meta(meta);
         rmpv::encode::write_value(&mut file, &val)?;
