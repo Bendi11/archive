@@ -570,7 +570,7 @@ impl<S: Read+ Seek> Bar<S> {
         Ok(())
     }
 
-    /// Save an entry to a file or to a folder if it is a [Dir](Entry::Dir)
+    /// Save an entry to a file or to a folder if it is a [Dir](Entry::Dir), used to save an unpacked directory
     pub(super) fn save_entry(dir: &std::path::Path, entry: &Entry, back: &mut S) -> BarResult<()> {
         let path = dir.join(entry.name());
         //Self::save_meta_to_file(&path, entry.meta())?;
@@ -584,7 +584,7 @@ impl<S: Read+ Seek> Bar<S> {
             }
             Entry::File(file) => {
                 let mut file_data = std::fs::File::create(path)?;
-                Self::save_file(file, &mut file_data, back, true);
+                Self::save_file(file, &mut file_data, back, true)?;
             }
         }
         Ok(())

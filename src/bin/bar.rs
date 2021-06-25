@@ -158,6 +158,7 @@ fn main() {
         .subcommand(unpack_subcommand())
         .subcommand(meta_subcommand())
         .subcommand(tree_subcommand())
+        .subcommand(extract_subcommand())
         ;
 
     let matches = app.get_matches();
@@ -166,6 +167,7 @@ fn main() {
         ("unpack", Some(args)) => unpack(args).unwrap(),
         ("meta", Some(args)) => meta(args).unwrap(),
         ("tree", Some(args)) => tree(args).unwrap(),
+        ("extract", Some(args)) => extract(args).unwrap(),
         _ => (),
     }
 }
@@ -267,7 +269,7 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
 
 /// Extract a list of files from an archive
 fn extract(args: &ArgMatches) -> BarResult<()> {
-    let mut ar = Bar::unpack(args.value_of("input-archive").unwrap())?;
+    let mut ar = Bar::unpack(args.value_of("input-file").unwrap())?;
     let output = args.value_of("output-dir").unwrap();
     std::fs::create_dir_all(output)?;
     for item in args.values_of("extracted-files").unwrap() {
