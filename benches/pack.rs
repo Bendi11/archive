@@ -8,7 +8,7 @@ fn pack_nocompress(c: &mut Criterion) {
             || std::io::BufWriter::new(std::fs::File::create("./benches/test-out.bar").unwrap()),
             |mut file| {
                 let mut bar =
-                    black_box(Bar::pack("./benches/test-in", Cursor::new(vec![0u8; 2048])))
+                    black_box(Bar::pack("./benches/test-in", Cursor::new(vec![0u8; 2048]), "none".parse().unwrap()))
                         .unwrap();
                 black_box(bar.write(&mut file)).unwrap();
             },

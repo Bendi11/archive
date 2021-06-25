@@ -4,6 +4,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use entry::Entry;
+use flate2::read::{DeflateDecoder, GzDecoder};
 use rmpv::Value;
 use std::{
     collections::HashMap,
@@ -14,13 +15,15 @@ use std::{
 };
 use thiserror::Error;
 
-use self::entry::{Dir, Meta};
+use crate::ar::entry::CompressMethod;
+
+use self::entry::{CompressType, Dir, Meta};
 
 pub mod entry;
 
 /// The `Bar` struct contains methods to read, manipulate and create `bar` files
 /// using any type that implements `Seek`, `Read` and `Write`
-pub struct Bar<S: Read + Write + Seek> {
+pub struct Bar<S: Read + Seek> {
     /// The internal data that we read from and write to
     data: S,
 
@@ -28,7 +31,7 @@ pub struct Bar<S: Read + Write + Seek> {
     header: Header,
 }
 
-impl<S: Read + Seek + Write> fmt::Debug for Bar<S> {
+impl<S: Read + Seek> fmt::Debug for Bar<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.header)
     }
@@ -186,7 +189,48 @@ impl Bar<std::fs::File> {
     }
 }
 
-impl<S: Read + Write + Seek> Bar<S> {
+impl<S: Read + Seek + Write> Bar<S> {
+    /// Pack a directory into an archive struct using a backing storage for file data
+    pub fn pack(dir: impl AsRef<std::path::Path>, mut backend: S, compression: CompressType) -> BarResult<Self> {
+        let dir = dir.as_ref();
+        let mut off = 0u64; //The current offset into the backing storage
+
+        let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
+        let root_meta = if let Some(meta) = meta.get("/") {
+           meta.clone()
+        } else {
+            Meta {
+                name: dir.file_name().unwrap().to_str().unwrap().to_owned(),
+                ..Default::default()
+            }
+        };
+
+        Ok(Self {
+            header: Header {
+                meta: root_meta,
+                root: entry::Dir {
+                    meta: Meta {
+                        name: "root".to_owned(),
+                        ..Default::default()
+                    },
+                    data: Self::pack_read_dir(
+                        dir,
+                        &mut off,
+                        &mut backend,
+                        &meta,
+                        compression
+                    )?
+                    .into_iter()
+                    .map(|entry| (entry.name(), entry))
+                    .collect(),
+                },
+            },
+            data: backend,
+        })
+    }
+}
+
+impl<S: Read+ Seek> Bar<S> {
     /// The file name of a metadata file in uncompressed archives
     const ROOT_METADATA_FILE: &'static str = ".__barmeta.msgpack";
 
@@ -250,10 +294,9 @@ impl<S: Read + Write + Seek> Bar<S> {
         off: &mut u64,
         writer: &mut W,
         meta_vec: &HashMap<String, Meta>,
+        compress: CompressType,
     ) -> BarResult<Vec<Entry>> {
         let mut vec = vec![];
-
-        //let meta_vec = Self::pack_read_dir_metadata(dir)?;
 
         for file in std::fs::read_dir(dir)? {
             let file = file?;
@@ -280,7 +323,7 @@ impl<S: Read + Write + Seek> Bar<S> {
                 true => {
                     let directory = entry::Dir {
                         meta,
-                        data: Self::pack_read_dir(&file.path(), off, writer, meta_vec)?
+                        data: Self::pack_read_dir(&file.path(), off, writer, meta_vec, compress)?
                             .into_iter()
                             .map(|entry| (entry.name(), entry))
                             .collect(),
@@ -292,7 +335,7 @@ impl<S: Read + Write + Seek> Bar<S> {
                     let size = data.metadata()?.len();
 
                     let file = entry::File {
-                        compression: entry::CompressMethod::None,
+                        compression: compress,
                         off: *off,
                         size: size as u32,
                         meta,
@@ -306,43 +349,7 @@ impl<S: Read + Write + Seek> Bar<S> {
         Ok(vec)
     }
 
-    /// Pack a directory into an archive struct using a backing storage for file data
-    pub fn pack(dir: impl AsRef<std::path::Path>, mut backend: S) -> BarResult<Self> {
-        let dir = dir.as_ref();
-        let mut off = 0u64; //The current offset into the backing storage
-
-        let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
-        let root_meta = if let Some(meta) = meta.get("/") {
-           meta.clone()
-        } else {
-            Meta {
-                name: dir.file_name().unwrap().to_str().unwrap().to_owned(),
-                ..Default::default()
-            }
-        };
-
-        Ok(Self {
-            header: Header {
-                meta: root_meta,
-                root: entry::Dir {
-                    meta: Meta {
-                        name: "root".to_owned(),
-                        ..Default::default()
-                    },
-                    data: Self::pack_read_dir(
-                        dir,
-                        &mut off,
-                        &mut backend,
-                        &meta,
-                    )?
-                    .into_iter()
-                    .map(|entry| (entry.name(), entry))
-                    .collect(),
-                },
-            },
-            data: backend,
-        })
-    }
+    
 
     /// Write this archive to a type implementing `Write`
     pub fn write<W: Write>(&mut self, writer: &mut W) -> BarResult<()> {
@@ -405,7 +412,7 @@ impl<S: Read + Write + Seek> Bar<S> {
                     "COMPRESSMETHOD field in FILE entry is not a string".into(),
                 )
             })?;
-        let compression = entry::CompressMethod::from_str(compression).map_err(|e| {
+        let compression = entry::CompressType::from_str(compression).map_err(|e| {
             BarErr::InvalidHeaderFormat(format!("Unrecognized compression method {}", e))
         })?;
         Ok(entry::File {
@@ -642,7 +649,28 @@ impl<S: Read + Write + Seek> Bar<S> {
                 let mut data = vec![0u8; file.size as usize];
                 back.seek(SeekFrom::Start(file.off))?;
                 back.read_exact(&mut data)?;
-                io::copy(&mut data.as_slice(), &mut file_data)?;
+
+                let bytes = match file.compression {
+                    CompressType(_, CompressMethod::Deflate) => {
+                        
+                        let mut encoder = DeflateDecoder::new(data.as_slice());
+                        
+                        let mut decoded = Vec::with_capacity(file.size as usize);
+                        encoder.read_to_end(&mut decoded)?;
+                        drop(data);
+                        decoded
+                    },
+                    CompressType(_, CompressMethod::Gzip) => {
+                        let mut encoder = GzDecoder::new(data.as_slice());
+                        let mut decoded = Vec::with_capacity(file.size as usize);
+                        encoder.read_to_end(&mut decoded)?;
+                        drop(data);
+                        decoded
+                    },
+                    CompressType(_, CompressMethod::None) => data
+                };
+
+                io::copy(&mut bytes.as_slice(), &mut file_data)?;
                 drop(file_data);
             }
         }
@@ -700,9 +728,8 @@ mod tests {
 
     #[test]
     pub fn test_write() {
-        //let mut thing = Bar::new("test_archive");
         let back = io::Cursor::new(vec![0u8; 2048]);
-        let mut thing = Bar::pack("test", back).unwrap();
+        let mut thing = Bar::pack("test", back, "high-gzip".parse().unwrap()).unwrap();
         let mut file = io::BufWriter::new(std::fs::File::create("./archive.bar").unwrap());
         thing.write(&mut file).unwrap();
         drop(thing);
@@ -716,6 +743,6 @@ mod tests {
         drop(reader);
 
         let back = io::Cursor::new(vec![0u8; 2048]);
-        let _packer = Bar::pack("output/test", back).unwrap();
+        let _packer = Bar::pack("output/test", back, "high-gzip".parse().unwrap()).unwrap();
     }
 }

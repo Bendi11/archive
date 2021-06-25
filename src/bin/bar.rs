@@ -1,6 +1,6 @@
 use bar::ar::{Bar, BarResult};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
-use console::{Color, style};
+use console::style;
 use std::{fs, path::Path};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
@@ -46,6 +46,16 @@ fn pack_subcommand() -> App<'static, 'static> {
             .short("o")
             .help("Path to the finished output archive file (careful, if a file already exists, it will be deleted)")
         )
+        .arg(Arg::with_name("compression")
+            .takes_value(true)
+            .multiple(false)
+            .long("compression")
+            .short("c")
+            .help("Select a compression method")
+            .possible_values(&["deflate", "gzip", "none"])
+            .default_value("none")
+        )
+
 }
 
 fn unpack_subcommand() -> App<'static, 'static> {
@@ -105,6 +115,7 @@ fn main() {
 fn pack(args: &ArgMatches) -> BarResult<()> {
     let input_dir = args.value_of("input-dir").unwrap();
     let output_file = args.value_of("output-file").unwrap();
+    let compression = args.value_of("compression").unwrap().parse().unwrap();
 
     //Open the output file
     let mut output = fs::OpenOptions::new()
@@ -114,7 +125,7 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
         .open(output_file)?;
     let back = tempfile::tempfile().unwrap();
 
-    let mut barchiver = Bar::pack(input_dir, back)?; //Pack the directory into a main file
+    let mut barchiver = Bar::pack(input_dir, back, compression)?; //Pack the directory into a main file
     barchiver.write(&mut output)?;
 
     Ok(())

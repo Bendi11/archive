@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use flate2::write::{DeflateEncoder, GzEncoder};
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom, Write},
@@ -16,25 +17,54 @@ pub enum CompressMethod {
     None,
 }
 
-impl std::str::FromStr for CompressMethod {
+/// The `CompressType` struct specifies both quality and mode of compression
+#[derive(Debug, Clone, Copy)]
+pub struct CompressType(pub flate2::Compression, pub CompressMethod);
+
+impl std::str::FromStr for CompressType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "deflate" => Ok(Self::Deflate),
-            "gzip" => Ok(Self::Gzip),
-            "none" => Ok(Self::None),
-            other => Err(other.to_owned()),
+        if s.to_lowercase().as_str() == "none" {
+            return Ok(Self(flate2::Compression::none(), CompressMethod::None))
         }
+        
+        let s = s.to_lowercase();
+        let (quality, method) = s.split_once("-").ok_or(s.to_owned())?;
+        let quality = match quality {
+            "high" => flate2::Compression::best(),
+            "fast" => flate2::Compression::fast(),
+            "medium" => flate2::Compression::new(5),
+            other => return Err(other.to_string())
+        };
+        let method = match method {
+            "gzip" => CompressMethod::Gzip,
+            "deflate" => CompressMethod::Deflate,
+            _ => return Err(s.to_owned())
+        };
+
+        Ok(Self(quality, method))
     }
 }
 
-impl ToString for CompressMethod {
+impl ToString for CompressType {
     fn to_string(&self) -> String {
-        match self {
-            Self::Deflate => "deflate".into(),
-            Self::Gzip => "gzip".into(),
-            Self::None => "none".into(),
+        if self.1 == CompressMethod::None {
+            return "none".into()
         }
+        let quality = match self.0.level() {
+            9 => "high",
+            1 => "fast",
+            5 => "medium",
+            _ => unreachable!()
+        };
+
+        let method = match self.1 {
+            CompressMethod::Deflate => "deflate",
+            CompressMethod::Gzip => "gzip",
+            CompressMethod::None => unreachable!(),
+        };
+
+        quality.to_owned() + "-" + method
     }
 }
 
@@ -61,7 +91,7 @@ pub struct File {
     pub meta: Meta,
 
     /// The compression method of this file
-    pub(crate) compression: CompressMethod,
+    pub(crate) compression: CompressType,
 
     /// The offset into the file that this file's data is
     pub(crate) off: u64,
@@ -80,15 +110,33 @@ impl File {
         reader.seek(SeekFrom::Start(self.off))?;
         let mut buf = vec![0u8; self.size as usize];
         reader.read_exact(&mut buf)?;
-        std::io::copy(&mut buf.as_slice(), writer)?; //Copy file data to the writer
+
+        //Compress bytes if it is desired
+        let bytes = match self.compression {
+            CompressType(quality, CompressMethod::Deflate) => {
+                let mut encoder = DeflateEncoder::new(Vec::new(), quality);
+                encoder.write_all(buf.as_slice())?;
+                drop(buf);
+                encoder.finish()?
+            },
+            CompressType(quality, CompressMethod::Gzip) => {
+                let mut encoder = GzEncoder::new(Vec::new(), quality);
+                encoder.write_all(buf.as_slice())?;
+                drop(buf);
+                encoder.finish()?
+            },
+            CompressType(_, CompressMethod::None) => buf
+        };
 
         let ret = Entry::File(Self {
             meta: self.meta.clone(),
             off: *off,
-            size: self.size,
+            size: bytes.len() as u32,
             compression: self.compression,
         });
-        *off += self.size as u64;
+        std::io::copy(&mut bytes.as_slice(), writer)?; //Copy file data to the writer
+        *off += bytes.len() as u64;
+        drop(bytes);
         Ok(ret)
     }
 }
@@ -323,7 +371,7 @@ mod tests {
                         name: "test.txt".into(),
                         ..Default::default()
                     },
-                    compression: CompressMethod::None,
+                    compression: "none".parse().unwrap(),
                     off: 0,
                     size: 0,
                 }),
