@@ -28,7 +28,7 @@ fn file_exists(s: String) -> Result<(), String> {
 fn pack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("pack")
         .about("Pack a directory into an archive")
-        .alias("p")
+        .visible_alias("p")
         .arg(Arg::with_name("input-dir")
             .required(true)
             .multiple(false)
@@ -51,8 +51,15 @@ fn pack_subcommand() -> App<'static, 'static> {
             .multiple(false)
             .long("compression")
             .short("c")
-            .help("Select a compression method")
-            .possible_values(&["deflate", "gzip", "none"])
+            .help("Select a compression method and quality")
+            .possible_values(&[
+                "high-gzip",
+                "high-deflate",
+                "medium-gzip",
+                "medium-deflate",
+                "fast-gzip",
+                "fast-deflate"
+            ])
             .default_value("none")
         )
 
@@ -60,7 +67,7 @@ fn pack_subcommand() -> App<'static, 'static> {
 
 fn unpack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("unpack")
-        .alias("u")
+        .visible_alias("u")
         .about("Unpack a .bar archive into a directory")
         .arg(input_archive_arg())
         .arg(Arg::with_name("output-dir")
@@ -77,8 +84,8 @@ fn unpack_subcommand() -> App<'static, 'static> {
 fn meta_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("meta")
         .about("View metadata of one file or directory")
-        .alias("m")
-        .alias("view")
+        .visible_alias("m")
+        .visible_alias("view")
         .arg(Arg::with_name("entry-paths")
             .help("A list of paths to fetch the metadata of")
             .multiple(true)
@@ -89,6 +96,20 @@ fn meta_subcommand() -> App<'static, 'static> {
             .short("e")
         )
         .arg(input_archive_arg())
+}
+
+fn tree_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("tree")
+        .visible_alias("t")
+        .about("Show the directory tree of the archive, as well as metadata about files")
+        .arg(Arg::with_name("show-meta")
+            .short("m")
+            .long("meta")
+            .help("Show metadata along with file and directory entries")
+            .takes_value(false)
+            .multiple(false)
+        )
+        .arg(input_archive_arg())       
 }
 
 fn main() {
