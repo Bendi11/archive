@@ -11,8 +11,7 @@ name = "bar"
 thiserror = "1.0" # For easier errors
 indicatif = "0.16.2" # For progress bar display in benchmarks and tests
 clap = "2.33" # For binaries that take command line arguments
-byteorder = "1.4" # For reading u16s and u32s in an easier and platform agnostic way
-bitfield = "0.13" # For bitfields in archive file headers
+byteorder = "1.4" # For reading u64s in an easier and platform agnostic way
 chrono = "0.4" # For file timestamps
 tempfile = "3.2" # For backing storage of archives
 flate2 = "1.0" # For compressing files individually in archive
@@ -25,7 +24,7 @@ rmpv = "0.4" # For heeader messagepack
 criterion = "0.3" # For benchmarking archive performance
 
 [[bench]]
-name = "lz"
+name = "pack"
 harness = false
 
 [profile.bench]

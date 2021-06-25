@@ -59,7 +59,7 @@ fn unpack_subcommand() -> App<'static, 'static> {
 
 fn main() {
     let app = App::new("bar")
-        .about("Utitility to pack, unpack, and manipulate .bar archives")
+        .about("Barchiver\nUtitility to pack, unpack, and manipulate .bar archives")
         .author("Bendi11")
         .version(crate_version!())
         .setting(AppSettings::WaitOnError)
