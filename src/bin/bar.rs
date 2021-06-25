@@ -274,7 +274,8 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
     let output = args.value_of("output-dir").unwrap();
     std::fs::create_dir_all(output)?;
     for item in args.values_of("extracted-files").unwrap() {
-        let mut file = std::fs::File::create(std::path::Path::new(output).join(item))?;
+        let name: std::path::Path = std::path::Path::new(output).file_name().unwrap().as_ref();
+        let mut file = std::fs::File::create(.join(item))?;
         ar.file_data(item, &mut file, match args.value_of("decompress").unwrap() {
             "on" | "true" => true,
             _ => false
