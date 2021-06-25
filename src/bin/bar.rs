@@ -137,6 +137,7 @@ fn extract_subcommand() -> App<'static, 'static> {
             .index(1)
             .multiple(true)
             .takes_value(true)
+            .required(true)
         )
         .arg(Arg::with_name("update-as-used")
             .help("Select wether to update the extracted file's metadata as used")
@@ -274,7 +275,10 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
     std::fs::create_dir_all(output)?;
     for item in args.values_of("extracted-files").unwrap() {
         let mut file = std::fs::File::create(std::path::Path::new(output).join(item))?;
-        ar.file_data(item, &mut file, args.is_present("decompress"))?;
+        ar.file_data(item, &mut file, match args.value_of("decompress").unwrap() {
+            "on" | "true" => true,
+            _ => false
+        })?;
     }
     Ok(())
 }
