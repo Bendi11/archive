@@ -1,5 +1,9 @@
 use chrono::{DateTime, Utc};
-use std::{collections::HashMap, io::{Read, Seek, SeekFrom, Write}, path};
+use std::{
+    collections::HashMap,
+    io::{Read, Seek, SeekFrom, Write},
+    path,
+};
 
 /// The `CompressMethod` represents all ways that a [File]'s data can be compressed in the archive
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,25 +71,27 @@ pub struct File {
 }
 
 impl File {
-    pub fn write_data<W: Write, R: Read + Seek>(&self, off: &mut u64, writer: &mut W, reader: &mut R) -> std::io::Result<Entry> {
-        reader.seek(SeekFrom::Start(self.off))?; 
-        let mut buf = vec![0u8 ; self.size as usize];
+    pub fn write_data<W: Write, R: Read + Seek>(
+        &self,
+        off: &mut u64,
+        writer: &mut W,
+        reader: &mut R,
+    ) -> std::io::Result<Entry> {
+        reader.seek(SeekFrom::Start(self.off))?;
+        let mut buf = vec![0u8; self.size as usize];
         reader.read_exact(&mut buf)?;
         std::io::copy(&mut buf.as_slice(), writer)?; //Copy file data to the writer
-        
-        let ret = Entry::File(
-            Self {
-                meta: self.meta.clone(),
-                off: *off,
-                size: self.size,
-                compression: self.compression,
-            }
-        );
+
+        let ret = Entry::File(Self {
+            meta: self.meta.clone(),
+            off: *off,
+            size: self.size,
+            compression: self.compression,
+        });
         *off += self.size as u64;
         Ok(ret)
     }
 }
-
 
 /// The `Dir` entry is used in the [Dir](Entry::Dir) entry variant and contains [File]s and [Dir]s in it
 #[derive(Debug, Default, Clone)]
@@ -98,13 +104,24 @@ pub struct Dir {
 }
 
 impl Dir {
-    pub fn write_data<W: Write, R: Read + Seek>(&self, off: &mut u64, writer: &mut W, reader: &mut R) -> std::io::Result<Entry> {
+    pub fn write_data<W: Write, R: Read + Seek>(
+        &self,
+        off: &mut u64,
+        writer: &mut W,
+        reader: &mut R,
+    ) -> std::io::Result<Entry> {
         Ok(Entry::Dir(Self {
             meta: self.meta.clone(),
-            data: self.data.iter().map(|(key, val)| match val.write_file_data(off, writer, reader) {
-                Ok(val) => Ok((key.clone(), val)),
-                Err(e) => Err(e)
-            } ).collect::<Result<HashMap<String, Entry>, _>>()?
+            data: self
+                .data
+                .iter()
+                .map(
+                    |(key, val)| match val.write_file_data(off, writer, reader) {
+                        Ok(val) => Ok((key.clone(), val)),
+                        Err(e) => Err(e),
+                    },
+                )
+                .collect::<Result<HashMap<String, Entry>, _>>()?,
         }))
     }
 
@@ -143,7 +160,6 @@ impl Dir {
         }
     }
 
-
     #[inline]
     pub fn entry<'a>(&self, paths: impl AsRef<path::Path>) -> Option<&Entry> {
         self.get_entry(paths.as_ref().components())
@@ -152,7 +168,6 @@ impl Dir {
     pub fn entry_mut<'a>(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
         self.get_entry_mut(paths.as_ref().components())
     }
-
 }
 
 /// The `Entry` struct represents one entry in the bar archive. It is the end result of parsing a
@@ -186,41 +201,45 @@ impl Entry {
     }
 
     /// Write file data to a writer, returning new headers with updated offsets
-    pub(crate) fn write_file_data<W: Write, R: Read + Seek>(&self, off: &mut u64, writer: &mut W, reader: &mut R) -> std::io::Result<Entry> {
+    pub(crate) fn write_file_data<W: Write, R: Read + Seek>(
+        &self,
+        off: &mut u64,
+        writer: &mut W,
+        reader: &mut R,
+    ) -> std::io::Result<Entry> {
         match self {
             Self::Dir(dir) => dir.write_data(off, writer, reader),
-            Self::File(file ) => file.write_data(off, writer, reader),
+            Self::File(file) => file.write_data(off, writer, reader),
         }
     }
 
     pub const fn as_dir(&self) -> Option<&Dir> {
         match self {
             Self::Dir(dir) => Some(dir),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn as_dir_mut(&mut self) -> Option<&mut Dir> {
         match self {
             Self::Dir(dir) => Some(dir),
-            _ => None
+            _ => None,
         }
     }
 
     pub const fn as_file(&self) -> Option<&File> {
         match self {
             Self::File(file) => Some(file),
-            _ => None
+            _ => None,
         }
     }
-        
+
     pub fn as_file_mut(&mut self) -> Option<&mut File> {
         match self {
             Self::File(file) => Some(file),
-            _ => None
+            _ => None,
         }
     }
-     
 
     /// Get the name of this file or directory
     #[inline(always)]

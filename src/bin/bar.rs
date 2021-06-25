@@ -1,12 +1,12 @@
 use bar::ar::{Bar, BarResult};
-use clap::{App, AppSettings, Arg, ArgMatches, SubCommand, crate_version};
+use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use std::{fs, path::Path};
 
 /// Validator for path inputs
 fn file_exists(s: String) -> Result<(), String> {
     match Path::new(&s).exists() {
         true => Ok(()),
-        false => Err(format!("The file or directory at {} does not exist", s))
+        false => Err(format!("The file or directory at {} does not exist", s)),
     }
 }
 
@@ -64,14 +64,13 @@ fn main() {
         .version(crate_version!())
         .setting(AppSettings::WaitOnError)
         .subcommand(pack_subcommand())
-        .subcommand(unpack_subcommand())
-    ;
+        .subcommand(unpack_subcommand());
 
-    let matches = app.get_matches(); 
+    let matches = app.get_matches();
     match matches.subcommand() {
         ("pack", Some(args)) => pack(args).unwrap(),
         ("unpack", Some(args)) => unpack(args).unwrap(),
-        _ => ()
+        _ => (),
     }
 }
 
@@ -81,9 +80,12 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
     let output_file = args.value_of("output-file").unwrap();
 
     //Open the output file
-    let mut output = fs::OpenOptions::new().write(true).create(true).truncate(true).open(output_file)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output_file)?;
     let back = tempfile::tempfile().unwrap();
-    
 
     let mut barchiver = Bar::pack(input_dir, back)?; //Pack the directory into a main file
     barchiver.write(&mut output)?;

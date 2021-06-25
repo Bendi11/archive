@@ -5,7 +5,13 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use entry::Entry;
 use rmpv::Value;
-use std::{collections::HashMap, fmt, io::{self, Read, Seek, SeekFrom, Write}, path, str::FromStr};
+use std::{
+    collections::HashMap,
+    fmt,
+    io::{self, Read, Seek, SeekFrom, Write},
+    path,
+    str::FromStr,
+};
 use thiserror::Error;
 
 use self::entry::{Dir, Meta};
@@ -55,6 +61,9 @@ pub enum BarErr {
 
     #[error("The archive header format is invalid: {0}")]
     InvalidHeaderFormat(String),
+
+    #[error("The metadata file format is invalid: {0}")]
+    BadMetadataFile(String),
 }
 
 /// The `BarResult<T>` type is a result with an Err variant of [BarErr]
@@ -71,12 +80,86 @@ const LASTUPDATE: u8 = 7;
 const USED: u8 = 8;
 const COMPRESSMETHOD: u8 = 9;
 
+fn write_meta(meta: &Meta) -> Value {
+    use rmpv::{Integer, Utf8String};
+    let mut map = vec![
+        (
+            Value::Integer(Integer::from(NAME)),
+            Value::String(Utf8String::from(meta.name.clone())),
+        ),
+        (
+            Value::Integer(Integer::from(USED)),
+            Value::Boolean(meta.used),
+        ),
+    ];
+    if meta.last_update.is_some() {
+        map.push((
+            Value::Integer(Integer::from(LASTUPDATE)),
+            Value::Integer(Integer::from(meta.last_update.unwrap().timestamp())),
+        ))
+    }
+    if meta.note.is_some() {
+        map.push((
+            Value::Integer(Integer::from(NOTE)),
+            Value::String(Utf8String::from(meta.note.clone().unwrap())),
+        ))
+    }
+
+    Value::Map(map)
+}
+
+fn write_entry(entry: &Entry) -> Value {
+    match entry {
+        Entry::Dir(dir) => Value::Array(vec![Value::Boolean(false), write_dir_entry(dir)]),
+        Entry::File(file) => Value::Array(vec![Value::Boolean(true), write_file_entry(file)]),
+    }
+}
+
+fn write_dir_entry(dir: &entry::Dir) -> Value {
+    Value::Array(vec![
+        write_meta(&dir.meta),
+        Value::Array(
+            dir.data
+                .iter()
+                .map(|(_, val)| write_entry(val))
+                .collect::<Vec<Value>>(),
+        ),
+    ])
+}
+
+fn write_header(header: &Header) -> Value {
+    Value::Array(vec![
+        write_meta(&header.meta),
+        write_dir_entry(&header.root),
+    ])
+}
+
+/// Create a file entry from a `File` entry
+fn write_file_entry(file: &entry::File) -> Value {
+    use rmpv::{Integer, Utf8String};
+    Value::Map(vec![
+        (
+            Value::Integer(Integer::from(OFFSET)),
+            Value::Integer(Integer::from(file.off)),
+        ),
+        (
+            Value::Integer(Integer::from(SIZE)),
+            Value::Integer(Integer::from(file.size)),
+        ),
+        (Value::Integer(Integer::from(META)), write_meta(&file.meta)),
+        (
+            Value::Integer(Integer::from(COMPRESSMETHOD)),
+            Value::String(Utf8String::from(file.compression.to_string())),
+        ),
+    ])
+}
+
 impl Bar<io::Cursor<Vec<u8>>> {
     /// Create a new `Bar` reader / writer from any type implementing `Seek`, `Read` and `Write`
     #[inline]
     #[must_use]
     pub fn new(name: impl ToString) -> Self {
-        Self { 
+        Self {
             data: io::Cursor::new(Vec::new()),
             header: Header {
                 meta: Meta {
@@ -88,9 +171,9 @@ impl Bar<io::Cursor<Vec<u8>>> {
                         name: "root".to_owned(),
                         ..Default::default()
                     },
-                    data: HashMap::new()
-                }
-            }
+                    data: HashMap::new(),
+                },
+            },
         }
     }
 }
@@ -104,10 +187,66 @@ impl Bar<std::fs::File> {
 }
 
 impl<S: Read + Write + Seek> Bar<S> {
-    const METADATAFILENAME: &'static str = "-__META__.internaldata.msgpack";
+    //const METADATAFILENAME: &'static str = "-__META__.internaldata.msgpack";
+    /// The file name of a metadata file in uncompressed archives
+    const ROOT_METADATA_FILE: &'static str = ".__barmeta.msgpack";
+
+    /// Get a hashmap of file paths in the archive to their metadata bincode
+    fn all_entry_metadata(&self, path: impl AsRef<path::Path>) -> Value {
+        use rmpv::Utf8String;
+        let mut vec = vec![];
+        fn walk_dir(vec: &mut Vec<(Value, Value)>, dir: &entry::Dir, path: path::PathBuf) {
+            for (name, item) in dir.data.iter() {
+                match item {
+                    Entry::Dir(dir) => {
+                        vec.push((
+                            Value::String(Utf8String::from(path.join(name).to_str().unwrap())),
+                            write_meta(&dir.meta),
+                        ));
+                        walk_dir(vec, dir, path.join(name));
+                    }
+                    Entry::File(file) => vec.push((
+                        Value::String(Utf8String::from(path.join(name).to_str().unwrap())),
+                        write_meta(&file.meta),
+                    )),
+                }
+            }
+        }
+        walk_dir(&mut vec, &self.header.root, path.as_ref().to_owned());
+        vec.push((
+            Value::String(Utf8String::from("/")),
+            write_meta(&self.header.meta),
+        ));
+        Value::Map(vec)
+    }
+
+    /// Read all entry metadata from a file
+    fn read_all_entry_metadata(
+        file: impl AsRef<std::path::Path>,
+    ) -> BarResult<HashMap<String, Meta>> {
+        let mut data = match std::fs::File::open(file.as_ref()) {
+            Ok(data) => data,
+            Err(_) => {
+                return Ok(HashMap::new());
+            }
+        };
+        let val = rmpv::decode::read_value(&mut data)?;
+        let val = val.as_map().ok_or_else(|| {
+            BarErr::BadMetadataFile("Entry metadata file's main content is not a map".into())
+        })?;
+        val.into_iter()
+            .map(|(path, meta)| -> BarResult<_> {
+                let path = path.as_str().ok_or_else(|| {
+                    BarErr::BadMetadataFile("The keys for metada's map are not strings".into())
+                })?;
+                let meta = Self::read_meta(meta)?; //Read the metadata
+                Ok((path.to_owned().replace("\\", "/"), meta))
+            })
+            .collect::<BarResult<HashMap<String, Meta>>>()
+    }
 
     /// Read all metadata files and put them in a hash
-    fn pack_read_dir_metadata(dir: &std::path::Path) -> BarResult<HashMap<String, Meta>> {
+    /*fn pack_read_dir_metadata(dir: &std::path::Path) -> BarResult<HashMap<String, Meta>> {
         let mut meta_vec = HashMap::new(); //A map of file or directory names to metadata structs
 
         //Get all metadata files
@@ -116,7 +255,7 @@ impl<S: Read + Write + Seek> Bar<S> {
             let name = file.file_name().to_str().unwrap().to_owned();
 
             if name.ends_with(Self::METADATAFILENAME) && name.starts_with(".") {
-                let mut reader = std::fs::File::open(file.path())?; //Open the metadata file 
+                let mut reader = std::fs::File::open(file.path())?; //Open the metadata file
                 let meta = rmpv::decode::read_value(&mut reader)?; //Read the header value
                 let meta = Self::read_meta(&meta)?;
 
@@ -125,43 +264,53 @@ impl<S: Read + Write + Seek> Bar<S> {
                 let stripped_name = path.strip_suffix(Self::METADATAFILENAME).unwrap();
                 let stripped_name = stripped_name.strip_prefix(".").unwrap();
                 meta_vec.insert(stripped_name.to_owned(), meta);
-                continue
+                continue;
             }
 
             match file.metadata().unwrap().is_dir() {
-                true => {
-                    meta_vec.extend(Self::pack_read_dir_metadata(file.path().as_path())?)
-                    
-                },
+                true => meta_vec.extend(Self::pack_read_dir_metadata(file.path().as_path())?),
                 false => continue,
             }
         }
 
         Ok(meta_vec)
-    }
+    }*/
 
-    /// Read all files in a directory into a list of [Entry]s
-    fn pack_read_dir<W: Write>(dir: &std::path::Path, off: &mut u64, writer: &mut W) -> BarResult<Vec<Entry>> {
+    /// Read all files in a directory into a list of [Entry]s, reading metadata files if possible
+    fn pack_read_dir<W: Write>(
+        dir: &std::path::Path,
+        off: &mut u64,
+        writer: &mut W,
+        meta_vec: &HashMap<String, Meta>,
+    ) -> BarResult<Vec<Entry>> {
         let mut vec = vec![];
 
-        let meta_vec = Self::pack_read_dir_metadata(dir)?;
-       
+        //let meta_vec = Self::pack_read_dir_metadata(dir)?;
+
         for file in std::fs::read_dir(dir)? {
             let file = file?;
             let name = file.file_name().to_str().unwrap().to_owned();
 
-            if name.ends_with(Self::METADATAFILENAME) {
-                continue
+            if name == Self::ROOT_METADATA_FILE {
+                continue;
             }
 
             //See if we have any metadata files to go with this one
-            let meta = match meta_vec.get(file.path().to_str().unwrap()) {
+            let meta = match meta_vec.get(&file.path().to_str().unwrap().replace("\\", "/")) {
                 Some(meta) => {
+                    println!(
+                        "Got match with metadata {}: {:#?}",
+                        name,
+                        meta
+                    );
                     meta.clone()
                 }
-                None => Meta {
-                    name: name.clone(),
-                    ..Default::default()
+                None => {
+                    println!("No match for file {}", file.path().display());
+                    Meta {
+                        name: name.clone(),
+                        ..Default::default()
+                    }
                 }
             };
 
@@ -169,15 +318,17 @@ impl<S: Read + Write + Seek> Bar<S> {
                 true => {
                     let directory = entry::Dir {
                         meta,
-                        data: Self::pack_read_dir(&file.path(), off, writer)?.into_iter().map(|entry| (entry.name(), entry)).collect()
+                        data: Self::pack_read_dir(&file.path(), off, writer, meta_vec)?
+                            .into_iter()
+                            .map(|entry| (entry.name(), entry))
+                            .collect(),
                     };
                     vec.push(Entry::Dir(directory));
-                    
-                },
+                }
                 false => {
                     let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
                     let size = data.metadata()?.len();
-                    
+
                     let file = entry::File {
                         compression: entry::CompressMethod::None,
                         off: *off,
@@ -198,11 +349,13 @@ impl<S: Read + Write + Seek> Bar<S> {
         let dir = dir.as_ref();
         let mut off = 0u64; //The current offset into the backing storage
 
-        let metafilenamne = dir.join(Self::METADATAFILENAME);
-        let meta = if metafilenamne.exists() {
-            let mut file = std::fs::File::open(metafilenamne)?; //Open the metadata file 
-            let meta = rmpv::decode::read_value(&mut file)?; //Read the header value
-            Self::read_meta(&meta)?
+        let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
+        println!("Possible metadatas: {:#?}", meta);
+        let root_meta = if let Some(meta) = meta.get("/") {
+            //let mut file = std::fs::File::open(metafilenamne)?; //Open the metadata file
+            //let meta = rmpv::decode::read_value(&mut file)?; //Read the header value
+           // Self::read_meta(&meta)?
+           meta.clone()
         } else {
             Meta {
                 name: dir.file_name().unwrap().to_str().unwrap().to_owned(),
@@ -210,16 +363,24 @@ impl<S: Read + Write + Seek> Bar<S> {
             }
         };
 
-        Ok(Self { 
+        Ok(Self {
             header: Header {
-                meta,
+                meta: root_meta,
                 root: entry::Dir {
                     meta: Meta {
                         name: "root".to_owned(),
                         ..Default::default()
                     },
-                    data: Self::pack_read_dir(dir, &mut off, &mut backend)?.into_iter().map(|entry| (entry.name(), entry)).collect()
-                }
+                    data: Self::pack_read_dir(
+                        dir,
+                        &mut off,
+                        &mut backend,
+                        &meta,
+                    )?
+                    .into_iter()
+                    .map(|entry| (entry.name(), entry))
+                    .collect(),
+                },
             },
             data: backend,
         })
@@ -228,81 +389,30 @@ impl<S: Read + Write + Seek> Bar<S> {
     /// Write this archive to a type implementing `Write`
     pub fn write<W: Write>(&mut self, writer: &mut W) -> BarResult<()> {
         self.data.seek(SeekFrom::Start(0))?;
-        let mut data_size = 0u64; 
-        let root = match self.header.root.write_data(&mut data_size, writer, &mut self.data)? {
+        let mut data_size = 0u64;
+        let root = match self
+            .header
+            .root
+            .write_data(&mut data_size, writer, &mut self.data)?
+        {
             Entry::Dir(dir) => dir,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
         self.header.root = root;
-        let header = Self::write_header(&self.header); 
-        rmpv::encode::write_value(writer, &header)?; //Write the header to the output 
+        let header = write_header(&self.header);
+        rmpv::encode::write_value(writer, &header)?; //Write the header to the output
         writer.write_u64::<LittleEndian>(data_size)?; //Write the file data size to the output
 
         writer.flush()?;
         Ok(())
     }
 
-    /// Create a file entry from a `File` entry
-    fn write_file_entry(file: &entry::File) -> Value {
-        use rmpv::{Integer, Utf8String};
-        Value::Map(vec![
-            (Value::Integer(Integer::from(OFFSET)), Value::Integer(Integer::from(file.off))),
-            (Value::Integer(Integer::from(SIZE)), Value::Integer(Integer::from(file.size))),
-            (Value::Integer(Integer::from(META)), Self::write_meta(&file.meta)),
-            (Value::Integer(Integer::from(COMPRESSMETHOD)), Value::String(Utf8String::from(file.compression.to_string()))),
-        ])
-    }
-
-    fn write_meta(meta: &Meta) -> Value {
-        use rmpv::{Integer, Utf8String};
-        let mut map = vec![
-            (Value::Integer(Integer::from(NAME)), Value::String(Utf8String::from(meta.name.clone()))),
-            (Value::Integer(Integer::from(USED)), Value::Boolean(meta.used)),
-        ];
-        if meta.last_update.is_some() {
-            map.push((Value::Integer(Integer::from(LASTUPDATE)), Value::Integer(Integer::from(meta.last_update.unwrap().timestamp()))))
-        }
-        if meta.note.is_some() {
-            map.push((Value::Integer(Integer::from(NOTE)), Value::String(Utf8String::from(meta.note.clone().unwrap()))))
-        }
-        
-        Value::Map(map)
-    }
-
-    fn write_entry(entry: &Entry) -> Value {
-        match entry {
-            Entry::Dir(dir) => Value::Array(vec![
-                Value::Boolean(false),
-                Self::write_dir_entry(dir)
-            ]),
-            Entry::File(file) => Value::Array(vec![
-                Value::Boolean(true),
-                Self::write_file_entry(file)
-            ])
-        }
-    }
-
-    fn write_dir_entry(dir: &entry::Dir) -> Value {
-        Value::Array(vec![
-            Self::write_meta(&dir.meta),
-            Value::Array(dir.data.iter().map(|(_, val)| Self::write_entry(val)).collect::<Vec<Value>>())
-        ])
-    }
-
-    fn write_header(header: &Header) -> Value {
-        Value::Array(vec![
-            Self::write_meta(&header.meta),
-            Self::write_dir_entry(&header.root),
-        ])
-    }
-
-
     /// Unpack an archive file into a [Bar] struct
     pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
         let header = Self::read_header(&mut storage)?;
         Ok(Self {
             header,
-            data: storage
+            data: storage,
         })
     }
 
@@ -486,14 +596,17 @@ impl<S: Read + Write + Seek> Bar<S> {
         let data_size = data.read_u64::<LittleEndian>()?;
         let header_size = (file_size - data_size) - 8;
         data.seek(SeekFrom::Start(data_size))?;
-        
+
         let mut header_bytes = vec![0u8; header_size as usize];
         data.read_exact(&mut header_bytes)?;
 
         let header_val = rmpv::decode::read_value(&mut header_bytes.as_slice())?; //Read the value from the header bytes
-        let header_val = header_val.as_array().ok_or(BarErr::InvalidHeaderFormat(
-            format!("The top level header is not an array, it is a {:?}", header_val),
-        ))?;
+        let header_val = header_val
+            .as_array()
+            .ok_or(BarErr::InvalidHeaderFormat(format!(
+                "The top level header is not an array, it is a {:?}",
+                header_val
+            )))?;
         match (header_val.get(0), header_val.get(1)) {
             (Some(metadata), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
@@ -535,18 +648,20 @@ impl<S: Read + Write + Seek> Bar<S> {
         }
     }
 
-
     /// Save this archive to a directory without packing
     pub fn save_unpacked(&mut self, path: impl AsRef<path::Path>) -> BarResult<()> {
         let path = path.as_ref();
         let dir = path.join(self.header.meta.name.clone());
         std::fs::create_dir_all(dir.clone())?; //Create the dir to save unpacked files to
 
-        let metafile = dir.join(self.header.meta.name.clone());
+        let metafile = dir.join(Self::ROOT_METADATA_FILE);
+        let metadata = self.all_entry_metadata(&dir);
+        let mut metafile = std::fs::File::create(metafile)?;
+        rmpv::encode::write_value(&mut metafile, &metadata)?;
 
-        Self::save_meta_to_file(metafile.as_ref(), &self.header.meta, )?; //Save header metadata to a file
+        //Self::save_meta_to_file(metafile.as_ref(), &self.header.meta, )?; //Save header metadata to a file
         for (_, entry) in self.header.root.data.iter() {
-            Self::save_entry(dir.as_ref(), entry, &mut self.data, )?;
+            Self::save_entry(dir.as_ref(), entry, &mut self.data)?;
         }
 
         Ok(())
@@ -555,7 +670,7 @@ impl<S: Read + Write + Seek> Bar<S> {
     /// Save an entry to a file or to a folder if it is a [Dir](Entry::Dir)
     fn save_entry(dir: &std::path::Path, entry: &Entry, back: &mut S) -> BarResult<()> {
         let path = dir.join(entry.name());
-        Self::save_meta_to_file(&path, entry.meta())?;
+        //Self::save_meta_to_file(&path, entry.meta())?;
 
         match entry {
             Entry::Dir(dir) => {
@@ -563,10 +678,10 @@ impl<S: Read + Write + Seek> Bar<S> {
                 for (_, file) in dir.data.iter() {
                     Self::save_entry(path.as_ref(), file, back)?;
                 }
-            },
+            }
             Entry::File(file) => {
                 let mut file_data = std::fs::File::create(path)?;
-                let mut data = vec![0u8 ; file.size as usize];
+                let mut data = vec![0u8; file.size as usize];
                 back.seek(SeekFrom::Start(file.off))?;
                 back.read_exact(&mut data)?;
                 io::copy(&mut data.as_slice(), &mut file_data)?;
@@ -576,19 +691,19 @@ impl<S: Read + Write + Seek> Bar<S> {
         Ok(())
     }
 
-    /// Save metadata to a special folder
-    fn save_meta_to_file(filename: &path::Path, meta: &Meta) -> BarResult<()> {
+    //Save metadata to a special folder
+    /*fn save_meta_to_file(filename: &path::Path, meta: &Meta) -> BarResult<()> {
         let path = filename.with_file_name( (".".to_owned() + filename.file_name().unwrap().to_str().unwrap()).to_owned() + Self::METADATAFILENAME);
         let mut file = std::fs::File::create(path)?;
-        let val = Self::write_meta(meta);
+        let val = write_meta(meta);
         rmpv::encode::write_value(&mut file, &val)?;
         drop(file);
         Ok(())
-    }
+    }*/
 }
 
 impl<S: Read + Write + Seek> Bar<S> {
-    /// Get a reference to an entry in the Bar archive. This should 
+    /// Get a reference to an entry in the Bar archive. This should
     /// NOT contain a root symbol like '/' on linux or
     /// 'C:\\' on windows
     #[inline]
@@ -603,12 +718,20 @@ impl<S: Read + Write + Seek> Bar<S> {
 
     #[inline]
     pub fn file_mut(&mut self, path: impl AsRef<std::path::Path>) -> Option<&mut entry::File> {
-        self.header.root.entry_mut(path).map(|e| e.as_file_mut()).flatten()
+        self.header
+            .root
+            .entry_mut(path)
+            .map(|e| e.as_file_mut())
+            .flatten()
     }
 
     #[inline]
     pub fn dir_mut(&mut self, path: impl AsRef<std::path::Path>) -> Option<&mut entry::Dir> {
-        self.header.root.entry_mut(path).map(|e| e.as_dir_mut()).flatten()
+        self.header
+            .root
+            .entry_mut(path)
+            .map(|e| e.as_dir_mut())
+            .flatten()
     }
 
     #[inline]
@@ -620,7 +743,6 @@ impl<S: Read + Write + Seek> Bar<S> {
     pub fn file(&self, path: impl AsRef<std::path::Path>) -> Option<&entry::File> {
         self.header.root.entry(path).map(|e| e.as_file()).flatten()
     }
-
 }
 
 #[cfg(test)]
@@ -631,7 +753,7 @@ mod tests {
     #[test]
     pub fn test_write() {
         //let mut thing = Bar::new("test_archive");
-        let back = io::Cursor::new(vec![0u8 ; 2048]);
+        let back = io::Cursor::new(vec![0u8; 2048]);
         let mut thing = Bar::pack("test", back).unwrap();
         let mut file = io::BufWriter::new(std::fs::File::create("./archive.bar").unwrap());
         thing.write(&mut file).unwrap();
@@ -641,13 +763,12 @@ mod tests {
         let file = reader.file_mut("subdir/test.txt").unwrap();
         file.meta.note = Some("This is a testing note about the file test.txt".into());
         drop(file);
-        
+
         reader.save_unpacked("output").unwrap();
         drop(reader);
 
-        let back = io::Cursor::new(vec![0u8 ; 2048]);
+        let back = io::Cursor::new(vec![0u8; 2048]);
         let _packer = Bar::pack("output/test", back).unwrap();
         panic!("")
     }
-
 }
