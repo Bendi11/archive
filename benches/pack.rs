@@ -10,7 +10,7 @@ fn pack_nocompress(c: &mut Criterion) {
                 let mut bar =
                     black_box(Bar::pack("./benches/test-in", Cursor::new(vec![0u8; 2048]), "none".parse().unwrap()))
                         .unwrap();
-                black_box(bar.write(&mut file)).unwrap();
+                black_box(bar.save(&mut file)).unwrap();
             },
         )
     });

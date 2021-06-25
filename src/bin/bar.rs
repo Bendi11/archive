@@ -1,4 +1,4 @@
-use bar::ar::{Bar, BarResult};
+use bar::ar::{Bar, BarResult, entry};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use console::style;
 use std::{fs, path::Path};
@@ -22,6 +22,17 @@ fn file_exists(s: String) -> Result<(), String> {
         true => Ok(()),
         false => Err(format!("The file or directory at {} does not exist", s)),
     }
+}
+
+/// Output directory argument
+fn output_dir_arg() -> Arg<'static, 'static> {
+    Arg::with_name("output-dir")
+        .help("Select a full or relative path to the output directory where a directory containing the unpacked contents will go")
+        .takes_value(true)
+        .multiple(false)
+        .required(true)
+        .long("output-dir")
+        .short("o")
 }
 
 /// Create the `pack` subcommand
@@ -58,7 +69,8 @@ fn pack_subcommand() -> App<'static, 'static> {
                 "medium-gzip",
                 "medium-deflate",
                 "fast-gzip",
-                "fast-deflate"
+                "fast-deflate",
+                "none",
             ])
             .default_value("none")
         )
@@ -70,15 +82,7 @@ fn unpack_subcommand() -> App<'static, 'static> {
         .visible_alias("u")
         .about("Unpack a .bar archive into a directory")
         .arg(input_archive_arg())
-        .arg(Arg::with_name("output-dir")
-            .help("Select a full or relative path to the output directory where a directory containing the unpacked contents will go")
-            .takes_value(true)
-            .multiple(false)
-            .required(true)
-            .long("output-dir")
-            .short("o")
-        )
-        .arg(input_archive_arg())
+        .arg(output_dir_arg())
 }
 
 fn meta_subcommand() -> App<'static, 'static> {
@@ -112,6 +116,38 @@ fn tree_subcommand() -> App<'static, 'static> {
         .arg(input_archive_arg())       
 }
 
+fn extract_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("extract")
+        .about("Extract a file from a packed archive")
+        .arg(input_archive_arg())
+        .visible_alias("e")
+        .arg(Arg::with_name("decompress")
+            .short("d")
+            .long("decompress")
+            .help("Decompress files [on/true] or extract their compressed data without decompressing [off/false]")
+            .default_value("on")
+            .possible_values(&["on", "true", "off", "false"])
+            .multiple(false)
+            .takes_value(true)
+        )
+        .arg(Arg::with_name("extracted-files")
+            .help("A list of files to extract from the archive file")
+            .short("e")
+            .long("extract")
+            .index(1)
+            .multiple(true)
+            .takes_value(true)
+        )
+        .arg(Arg::with_name("update-as-used")
+            .help("Select wether to update the extracted file's metadata as used")
+            .takes_value(false)
+            .multiple(false)
+            .long("consume")
+            .short("c")
+        )
+        .arg(output_dir_arg())
+}
+
 fn main() {
     let app = App::new("bar")
         .about("Barchiver\nUtitility to pack, unpack, and manipulate .bar archives")
@@ -121,6 +157,7 @@ fn main() {
         .subcommand(pack_subcommand())
         .subcommand(unpack_subcommand())
         .subcommand(meta_subcommand())
+        .subcommand(tree_subcommand())
         ;
 
     let matches = app.get_matches();
@@ -128,6 +165,7 @@ fn main() {
         ("pack", Some(args)) => pack(args).unwrap(),
         ("unpack", Some(args)) => unpack(args).unwrap(),
         ("meta", Some(args)) => meta(args).unwrap(),
+        ("tree", Some(args)) => tree(args).unwrap(),
         _ => (),
     }
 }
@@ -147,7 +185,7 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
     let back = tempfile::tempfile().unwrap();
 
     let mut barchiver = Bar::pack(input_dir, back, compression)?; //Pack the directory into a main file
-    barchiver.write(&mut output)?;
+    barchiver.save(&mut output)?;
 
     Ok(())
 }
@@ -197,3 +235,44 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
     Ok(())
 }
 
+/// Show a directory tree with metadata
+fn tree(args: &ArgMatches) -> BarResult<()> { 
+    fn walk_dir(dir: &entry::Dir, nested: u16) {
+        fn print_tabs(num: u16) {
+            (0..num).for_each(|_| print!("    "));
+            println!("|");
+            (0..num).for_each(|_| print!("    "));
+            print!("+ ");
+        }
+        
+        print_tabs(nested);
+        println!("{}", style(&dir.meta.name).bold().blue());
+        for entry in dir.entries() {
+            match entry {
+                entry::Entry::File(file) => {
+                    print_tabs(nested + 1);
+                    println!("{}", style(&file.meta.name).green());
+                },
+                entry::Entry::Dir(d) => {
+                    walk_dir(d, nested + 1);
+                }
+            }
+        }
+    }
+    let _ = args.is_present("show-meta");
+    let bar = Bar::unpack(args.value_of("input-file").unwrap())?;
+    walk_dir(bar.root(), 0);
+    Ok(())
+}
+
+/// Extract a list of files from an archive
+fn extract(args: &ArgMatches) -> BarResult<()> {
+    let mut ar = Bar::unpack(args.value_of("input-archive").unwrap())?;
+    let output = args.value_of("output-dir").unwrap();
+    std::fs::create_dir_all(output)?;
+    for item in args.values_of("extracted-files").unwrap() {
+        let mut file = std::fs::File::create(std::path::Path::new(output).join(item))?;
+        ar.file_data(item, &mut file, args.is_present("decompress"))?;
+    }
+    Ok(())
+}

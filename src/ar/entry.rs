@@ -216,6 +216,12 @@ impl Dir {
     pub fn entry_mut<'a>(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
         self.get_entry_mut(paths.as_ref().components())
     }
+
+    /// Get an iterator over the contained entries
+    #[inline]
+    pub fn entries(&self) -> impl Iterator<Item = &Entry> {
+        self.data.iter().map(|(_, entry)| entry)
+    }
 }
 
 /// The `Entry` struct represents one entry in the bar archive. It is the end result of parsing a
