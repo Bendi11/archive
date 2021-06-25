@@ -187,7 +187,6 @@ impl Bar<std::fs::File> {
 }
 
 impl<S: Read + Write + Seek> Bar<S> {
-    //const METADATAFILENAME: &'static str = "-__META__.internaldata.msgpack";
     /// The file name of a metadata file in uncompressed archives
     const ROOT_METADATA_FILE: &'static str = ".__barmeta.msgpack";
 
@@ -220,7 +219,7 @@ impl<S: Read + Write + Seek> Bar<S> {
         Value::Map(vec)
     }
 
-    /// Read all entry metadata from a file
+    /// Read all entry metadata from a root file
     fn read_all_entry_metadata(
         file: impl AsRef<std::path::Path>,
     ) -> BarResult<HashMap<String, Meta>> {
@@ -245,37 +244,6 @@ impl<S: Read + Write + Seek> Bar<S> {
             .collect::<BarResult<HashMap<String, Meta>>>()
     }
 
-    /// Read all metadata files and put them in a hash
-    /*fn pack_read_dir_metadata(dir: &std::path::Path) -> BarResult<HashMap<String, Meta>> {
-        let mut meta_vec = HashMap::new(); //A map of file or directory names to metadata structs
-
-        //Get all metadata files
-        for file in std::fs::read_dir(dir)? {
-            let file = file?;
-            let name = file.file_name().to_str().unwrap().to_owned();
-
-            if name.ends_with(Self::METADATAFILENAME) && name.starts_with(".") {
-                let mut reader = std::fs::File::open(file.path())?; //Open the metadata file
-                let meta = rmpv::decode::read_value(&mut reader)?; //Read the header value
-                let meta = Self::read_meta(&meta)?;
-
-                let path = file.path();
-                let path = path.to_str().unwrap();
-                let stripped_name = path.strip_suffix(Self::METADATAFILENAME).unwrap();
-                let stripped_name = stripped_name.strip_prefix(".").unwrap();
-                meta_vec.insert(stripped_name.to_owned(), meta);
-                continue;
-            }
-
-            match file.metadata().unwrap().is_dir() {
-                true => meta_vec.extend(Self::pack_read_dir_metadata(file.path().as_path())?),
-                false => continue,
-            }
-        }
-
-        Ok(meta_vec)
-    }*/
-
     /// Read all files in a directory into a list of [Entry]s, reading metadata files if possible
     fn pack_read_dir<W: Write>(
         dir: &std::path::Path,
@@ -298,15 +266,9 @@ impl<S: Read + Write + Seek> Bar<S> {
             //See if we have any metadata files to go with this one
             let meta = match meta_vec.get(&file.path().to_str().unwrap().replace("\\", "/")) {
                 Some(meta) => {
-                    println!(
-                        "Got match with metadata {}: {:#?}",
-                        name,
-                        meta
-                    );
                     meta.clone()
                 }
                 None => {
-                    println!("No match for file {}", file.path().display());
                     Meta {
                         name: name.clone(),
                         ..Default::default()
@@ -350,11 +312,7 @@ impl<S: Read + Write + Seek> Bar<S> {
         let mut off = 0u64; //The current offset into the backing storage
 
         let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
-        println!("Possible metadatas: {:#?}", meta);
         let root_meta = if let Some(meta) = meta.get("/") {
-            //let mut file = std::fs::File::open(metafilenamne)?; //Open the metadata file
-            //let meta = rmpv::decode::read_value(&mut file)?; //Read the header value
-           // Self::read_meta(&meta)?
            meta.clone()
         } else {
             Meta {
@@ -690,16 +648,6 @@ impl<S: Read + Write + Seek> Bar<S> {
         }
         Ok(())
     }
-
-    //Save metadata to a special folder
-    /*fn save_meta_to_file(filename: &path::Path, meta: &Meta) -> BarResult<()> {
-        let path = filename.with_file_name( (".".to_owned() + filename.file_name().unwrap().to_str().unwrap()).to_owned() + Self::METADATAFILENAME);
-        let mut file = std::fs::File::create(path)?;
-        let val = write_meta(meta);
-        rmpv::encode::write_value(&mut file, &val)?;
-        drop(file);
-        Ok(())
-    }*/
 }
 
 impl<S: Read + Write + Seek> Bar<S> {
@@ -761,7 +709,7 @@ mod tests {
         drop(file);
         let mut reader = Bar::unpack("./archive.bar").unwrap();
         let file = reader.file_mut("subdir/test.txt").unwrap();
-        file.meta.note = Some("This is a testing note about the file test.txt".into());
+        file.meta.note = Some("This is a testing note about the file test.txt testing".into());
         drop(file);
 
         reader.save_unpacked("output").unwrap();
@@ -769,6 +717,5 @@ mod tests {
 
         let back = io::Cursor::new(vec![0u8; 2048]);
         let _packer = Bar::pack("output/test", back).unwrap();
-        panic!("")
     }
 }

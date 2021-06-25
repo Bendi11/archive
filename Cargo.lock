@@ -39,6 +39,7 @@ dependencies = [
  "byteorder",
  "chrono",
  "clap",
+ "console",
  "criterion",
  "flate2",
  "indicatif",
@@ -130,7 +131,9 @@ dependencies = [
  "encode_unicode",
  "lazy_static",
  "libc",
+ "regex",
  "terminal_size",
+ "unicode-width",
  "winapi",
 ]
 

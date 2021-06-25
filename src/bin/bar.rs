@@ -1,6 +1,20 @@
 use bar::ar::{Bar, BarResult};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
+use console::{Color, style};
 use std::{fs, path::Path};
+
+/// An argument with the name "input-file" that validates that its argument exists and only takes one
+/// value
+fn input_archive_arg() -> Arg<'static, 'static> {
+    Arg::with_name("input-file")
+        .help("Select a full or relative path to an input bar archive")
+        .required(true)
+        .takes_value(true)
+        .multiple(false)
+        .validator(file_exists)
+        .long("input-file")
+        .short("i")
+}
 
 /// Validator for path inputs
 fn file_exists(s: String) -> Result<(), String> {
@@ -38,15 +52,7 @@ fn unpack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("unpack")
         .alias("u")
         .about("Unpack a .bar archive into a directory")
-        .arg(Arg::with_name("input-file")
-            .help("Select a full or relative path to an input bar archive")
-            .required(true)
-            .takes_value(true)
-            .multiple(false)
-            .validator(file_exists)
-            .long("input-file")
-            .short("i")
-        )
+        .arg(input_archive_arg())
         .arg(Arg::with_name("output-dir")
             .help("Select a full or relative path to the output directory where a directory containing the unpacked contents will go")
             .takes_value(true)
@@ -55,6 +61,24 @@ fn unpack_subcommand() -> App<'static, 'static> {
             .long("output-dir")
             .short("o")
         )
+        .arg(input_archive_arg())
+}
+
+fn meta_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("meta")
+        .about("View metadata of one file or directory")
+        .alias("m")
+        .alias("view")
+        .arg(Arg::with_name("entry-paths")
+            .help("A list of paths to fetch the metadata of")
+            .multiple(true)
+            .takes_value(true)
+            .index(1)
+            .long("entry-paths")
+            .required(true)
+            .short("e")
+        )
+        .arg(input_archive_arg())
 }
 
 fn main() {
@@ -64,12 +88,15 @@ fn main() {
         .version(crate_version!())
         .setting(AppSettings::WaitOnError)
         .subcommand(pack_subcommand())
-        .subcommand(unpack_subcommand());
+        .subcommand(unpack_subcommand())
+        .subcommand(meta_subcommand())
+        ;
 
     let matches = app.get_matches();
     match matches.subcommand() {
         ("pack", Some(args)) => pack(args).unwrap(),
         ("unpack", Some(args)) => unpack(args).unwrap(),
+        ("meta", Some(args)) => meta(args).unwrap(),
         _ => (),
     }
 }
@@ -102,3 +129,39 @@ fn unpack(args: &ArgMatches) -> BarResult<()> {
 
     Ok(())
 }
+
+/// Show metadata about a list of files in an archive
+fn meta(args: &ArgMatches) -> BarResult<()> {
+    let bar = Bar::unpack(args.value_of("input-file").unwrap())?;
+    for arg in args.values_of("entry-paths").unwrap() {
+        let meta = match (bar.file(arg), bar.dir(arg)) {
+            (Some(file), _) => {
+                println!("{}", style(format!("File {}", arg)).bold());
+                &file.meta
+            },
+            (_, Some(dir)) => {
+                println!("{}", style(format!("Directory {}", arg)).bold());
+                &dir.meta
+            },
+            (_, _) => {
+                eprintln!("{}", style(format!("File or directory {} does not exist in the archive", arg)).red().bold());
+                continue
+            }
+        };
+        if let Some(ref last_update) = meta.last_update {
+            println!("Last updated on {}", last_update.format("%v at %r"))
+        }
+        if let Some(ref note) = meta.note {
+            println!("{}{}", style("Note: ").bold(), note);
+        }
+        println!("{}", match meta.used {
+            true => "This file has been used",
+            false => "This file has not been used"
+        });
+        println!("{}", style("\n==========\n").white().bold());
+
+    }
+
+    Ok(())
+}
+

@@ -9,7 +9,10 @@ name = "bar"
 
 [dependencies]
 thiserror = "1.0" # For easier errors
+
 indicatif = "0.16.2" # For progress bar display in benchmarks and tests
+console = "0.14" # For console formatting in terminal applications
+
 clap = "2.33" # For binaries that take command line arguments
 byteorder = "1.4" # For reading u64s in an easier and platform agnostic way
 chrono = "0.4" # For file timestamps
