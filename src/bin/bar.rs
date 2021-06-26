@@ -27,12 +27,13 @@ fn file_exists(s: String) -> Result<(), String> {
 /// Output directory argument
 fn output_dir_arg() -> Arg<'static, 'static> {
     Arg::with_name("output-dir")
-        .help("Select a full or relative path to the output directory where a directory containing the unpacked contents will go")
+        .help("Select a full or relative path to the directory that output files will be written to")
         .takes_value(true)
         .multiple(false)
         .required(true)
         .long("output-dir")
         .short("o")
+        .validator(file_exists)
 }
 
 /// Create the `pack` subcommand
@@ -270,16 +271,23 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
 
 /// Extract a list of files from an archive
 fn extract(args: &ArgMatches) -> BarResult<()> {
-    let mut ar = Bar::unpack(args.value_of("input-file").unwrap())?;
-    let output = args.value_of("output-dir").unwrap();
-    std::fs::create_dir_all(output)?;
+    use std::path;
+    let input = args.value_of("input-file").unwrap();
+    let mut ar = Bar::unpack(input)?;
+    let output = path::PathBuf::from(args.value_of("output-dir").unwrap());
+
     for item in args.values_of("extracted-files").unwrap() {
-        let name: std::path::Path = std::path::Path::new(output).file_name().unwrap().as_ref();
-        let mut file = std::fs::File::create(.join(item))?;
+        let name: &path::Path = path::Path::new(&item).file_name().unwrap().as_ref();
+        let mut file = fs::File::create(output.join(name))?;
         ar.file_data(item, &mut file, match args.value_of("decompress").unwrap() {
             "on" | "true" => true,
             _ => false
         })?;
+
+        if args.is_present("update-as-used") {
+            ar.file_mut(item).unwrap().meta.used = true;
+        }
     }
+    ar.save_updated()?;
     Ok(())
 }

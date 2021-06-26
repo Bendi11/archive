@@ -5,11 +5,11 @@ pub use bar::{
     Bar, BarResult, BarErr
 };
 use bar::{
-    Header, write_header, 
+    Header, ser_header, 
 };
 use byteorder::{WriteBytesExt, LittleEndian};
 
-use std::io::{self, SeekFrom};
+use std::io::{self, Seek, SeekFrom, Write};
 use entry::{
     CompressType, Meta, Entry,
 };
@@ -135,7 +135,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
             _ => unreachable!(),
         };
         self.header.root = root;
-        let header = write_header(&self.header);
+        let header = ser_header(&self.header);
         rmpv::encode::write_value(writer, &header)?; //Write the header to the output
         writer.write_u64::<LittleEndian>(data_size)?; //Write the file data size to the output
 
@@ -185,7 +185,19 @@ impl Bar<std::fs::File> {
     /// ```
     pub fn unpack(file: impl AsRef<std::path::Path>) -> BarResult<Self> {
         let file = file.as_ref();
-        let file = std::fs::File::open(file)?;
+        let file = std::fs::OpenOptions::new().write(true).read(true).open(file)?;
         Self::unpack_reader(file)
+    }
+
+    /// Re-save a bar file with updated metadata
+    pub fn save_updated(mut self) -> BarResult<()> {
+        let (header_pos, _) = Self::get_header_pos(&mut self.data)?;
+        self.data.set_len(header_pos)?; //Truncate the underlying file to erase the file data size and header data
+        self.data.seek(io::SeekFrom::End(0))?;
+        let val = bar::ser_header(&self.header); //Serialize our header with updated metadata
+        rmpv::encode::write_value(&mut self.data, &val)?;
+        self.data.write_u64::<LittleEndian>(header_pos)?;
+        self.data.flush()?;
+        Ok(())
     }
 }

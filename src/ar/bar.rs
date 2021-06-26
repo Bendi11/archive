@@ -16,9 +16,7 @@ use std::{
 use thiserror::Error;
 use super::entry;
 
-use crate::ar::entry::CompressMethod;
-
-use super::entry::{CompressType, Dir, Meta};
+use crate::ar::entry::{CompressType, Dir, Meta, CompressMethod};
 
 /// The `Bar` struct contains methods to read, manipulate and create `bar` files
 /// using any type that implements `Seek`, `Read` and `Write`
@@ -85,7 +83,7 @@ const LASTUPDATE: u8 = 7;
 const USED: u8 = 8;
 const COMPRESSMETHOD: u8 = 9;
 
-pub(super) fn write_meta(meta: &Meta) -> Value {
+pub(super) fn ser_meta(meta: &Meta) -> Value {
     use rmpv::{Integer, Utf8String};
     let mut map = vec![
         (
@@ -113,34 +111,34 @@ pub(super) fn write_meta(meta: &Meta) -> Value {
     Value::Map(map)
 }
 
-pub(super) fn write_entry(entry: &Entry) -> Value {
+pub(super) fn ser_entry(entry: &Entry) -> Value {
     match entry {
-        Entry::Dir(dir) => Value::Array(vec![Value::Boolean(false), write_dir_entry(dir)]),
-        Entry::File(file) => Value::Array(vec![Value::Boolean(true), write_file_entry(file)]),
+        Entry::Dir(dir) => Value::Array(vec![Value::Boolean(false), ser_direntry(dir)]),
+        Entry::File(file) => Value::Array(vec![Value::Boolean(true), ser_fileentry(file)]),
     }
 }
 
-pub(super) fn write_dir_entry(dir: &entry::Dir) -> Value {
+pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
     Value::Array(vec![
-        write_meta(&dir.meta),
+        ser_meta(&dir.meta),
         Value::Array(
             dir.data
                 .iter()
-                .map(|(_, val)| write_entry(val))
+                .map(|(_, val)| ser_entry(val))
                 .collect::<Vec<Value>>(),
         ),
     ])
 }
 
-pub(super) fn write_header(header: &Header) -> Value {
+pub(super) fn ser_header(header: &Header) -> Value {
     Value::Array(vec![
-        write_meta(&header.meta),
-        write_dir_entry(&header.root),
+        ser_meta(&header.meta),
+        ser_direntry(&header.root),
     ])
 }
 
 /// Create a file value from a `File` entry
-pub(super) fn write_file_entry(file: &entry::File) -> Value {
+pub(super) fn ser_fileentry(file: &entry::File) -> Value {
     use rmpv::{Integer, Utf8String};
     Value::Map(vec![
         (
@@ -151,7 +149,7 @@ pub(super) fn write_file_entry(file: &entry::File) -> Value {
             Value::Integer(Integer::from(SIZE)),
             Value::Integer(Integer::from(file.size)),
         ),
-        (Value::Integer(Integer::from(META)), write_meta(&file.meta)),
+        (Value::Integer(Integer::from(META)), ser_meta(&file.meta)),
         (
             Value::Integer(Integer::from(COMPRESSMETHOD)),
             Value::String(Utf8String::from(file.compression.to_string())),
@@ -160,7 +158,7 @@ pub(super) fn write_file_entry(file: &entry::File) -> Value {
 }
 
 impl Bar<io::Cursor<Vec<u8>>> {
-    /// Create a new `Bar` reader / writer from any type implementing `Seek`, `Read` and `Write`
+    /// Create a new `Bar` archive with an in-memory `Vec` as backing storage
     #[inline]
     #[must_use]
     pub fn new(name: impl ToString) -> Self {
@@ -197,13 +195,13 @@ impl<S: Read+ Seek> Bar<S> {
                     Entry::Dir(dir) => {
                         vec.push((
                             Value::String(Utf8String::from(path.join(name).to_str().unwrap())),
-                            write_meta(&dir.meta),
+                            ser_meta(&dir.meta),
                         ));
                         walk_dir(vec, dir, path.join(name));
                     }
                     Entry::File(file) => vec.push((
                         Value::String(Utf8String::from(path.join(name).to_str().unwrap())),
-                        write_meta(&file.meta),
+                        ser_meta(&file.meta),
                     )),
                 }
             }
@@ -211,12 +209,12 @@ impl<S: Read+ Seek> Bar<S> {
         walk_dir(&mut vec, &self.header.root, path.as_ref().to_owned());
         vec.push((
             Value::String(Utf8String::from("/")),
-            write_meta(&self.header.meta),
+            ser_meta(&self.header.meta),
         ));
         Value::Map(vec)
     }
 
-    /// Read all entry metadata from a root file
+    /// Read all entry metadata from a root file when packing a previously unpacked directory
     pub(super) fn read_all_entry_metadata(
         file: impl AsRef<std::path::Path>,
     ) -> BarResult<HashMap<String, Meta>> {
@@ -474,9 +472,10 @@ impl<S: Read+ Seek> Bar<S> {
         }
     }
 
-    /// Read header bytes from the internal reader by seeking to the end and reading the file size
-    pub(super) fn read_header(data: &mut S) -> BarResult<Header> {
-        data.seek(SeekFrom::End(0))?; //Seek to the end of the file, then back 4 bytes
+    /// Get the position in the reader that our header data starts and return
+    /// (file data size, header size)
+    pub(super) fn get_header_pos(data: &mut S) -> BarResult<(u64, u64)> {
+        data.seek(SeekFrom::End(0))?; //Seek to the end of the file, then back 8 bytes
         let file_size = data.stream_position()?;
         data.seek(SeekFrom::End(-8))?;
 
@@ -484,6 +483,12 @@ impl<S: Read+ Seek> Bar<S> {
         let header_size = (file_size - data_size) - 8;
         data.seek(SeekFrom::Start(data_size))?;
 
+        Ok((data_size, header_size))
+    }
+
+    /// Read header bytes from the internal reader by seeking to the end and reading the file size
+    pub(super) fn read_header(data: &mut S) -> BarResult<Header> {
+        let (_, header_size) = Self::get_header_pos(data)?;
         let mut header_bytes = vec![0u8; header_size as usize];
         data.read_exact(&mut header_bytes)?;
 
@@ -508,7 +513,6 @@ impl<S: Read+ Seek> Bar<S> {
         }
     }
 
-    /// Read an entry from the file, assumes that the reader is positioned just before a header nibble
     /// Entry: Array [
     /// Boolean (DIR is false, FILE is true),
     /// if DIR <Directory>
