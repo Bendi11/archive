@@ -169,6 +169,8 @@ impl File {
 
         *off += bytes.len() as u64;
         drop(bytes);
+
+        prog.tick();
         Ok(ret)
     }
 
