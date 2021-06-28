@@ -7,7 +7,7 @@ use console::{style, Color, Style};
 use dialoguer::theme::ColorfulTheme;
 use indicatif::HumanBytes;
 use sublime_fuzzy::best_match;
-use std::{fs, path::Path};
+use std::{fs, path::{self, Path}};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
 /// value
@@ -428,7 +428,6 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
 
 /// Extract a list of files from an archive
 fn extract(args: &ArgMatches) -> BarResult<()> {
-    use std::path;
     let input = args.value_of("input-file").unwrap();
     let mut ar = Bar::unpack(input)?;
     let output = path::PathBuf::from(args.value_of("output-dir").unwrap());
@@ -516,14 +515,14 @@ fn search(args: &ArgMatches) -> BarResult<()> {
     let max_results: u32 = args.value_of("max-results").unwrap().parse().unwrap();
     let min: isize = args.value_of("min-score").unwrap().parse().unwrap();
 
-    let dir = match args.value_of("search-dir") {
+    let (dir, name) = match args.value_of("search-dir") {
         Some(dir) => {
             match ar.dir(dir) {
-                Some(dir) => dir,
+                Some(d) => (d, dir),
                 None => return Err(BarErr::NoEntry(dir.to_owned()))
             }
         },
-        None => ar.root(),
+        None => (ar.root(), "/"),
     };
 
     /// Search metadata name and note for a query string and return the largest score
@@ -545,11 +544,11 @@ fn search(args: &ArgMatches) -> BarResult<()> {
         }
     }
 
-    fn search_dir<'a>(dir: &'a entry::Dir, scores: &mut Vec<(&'a entry::Entry, isize)>, query: &str, max_len: usize, min: isize) {
+    fn search_dir<'a>(dir: &'a entry::Dir, scores: &mut Vec<(&'a entry::Entry, isize, path::PathBuf)>, query: &str, max_len: usize, min: isize, path: path::PathBuf) {
         for entry in dir.entries() {
             let score = match entry {
                 Entry::Dir(d) => {
-                    search_dir(d, scores, query, max_len, min);
+                    search_dir(d, scores, query, max_len, min, path.join(&d.meta.name));
                     search_meta(&d.meta, query)
                 }
                 Entry::File(f) => {
@@ -557,20 +556,21 @@ fn search(args: &ArgMatches) -> BarResult<()> {
                 }
             };
             if score >= min {
-                scores.push((entry, score));
+                scores.push((entry, score, path.join(&entry.meta().name)));
             } 
         }
-        scores.sort_by(|(_, item), (_, next)| item.cmp(next).reverse());
+        scores.sort_by(|(_, item, _), (_, next, _)| item.cmp(next).reverse());
         scores.truncate(max_len);
     }
 
     let mut scores = Vec::with_capacity(max_results as usize);
-    search_dir(dir, &mut scores, query, max_results as usize, min);
+    search_dir(dir, &mut scores, query, max_results as usize, min, path::PathBuf::from(name));
     let cols = console::Term::stdout().size().1;
 
-    for (entry, score) in scores {
+    for (entry, score, path) in scores {
         println!("{}", "=".repeat(cols as usize));
         println!("{}", style(format!("score: {}", score)).italic());
+        println!("{}", style(path.display()).italic());
         print_entry(entry);
     }
 
