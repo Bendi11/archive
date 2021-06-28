@@ -56,6 +56,7 @@ fn pack_subcommand() -> App<'static, 'static> {
             .short("i")
             .help("Choose a full or relative path to the directory that will be compressed into an archive")
             .validator(file_exists)
+            .index(1)
         )   
         .arg(Arg::with_name("output-file")
             .required(true)
@@ -64,6 +65,7 @@ fn pack_subcommand() -> App<'static, 'static> {
             .long("output-file")
             .short("o")
             .help("Path to the finished output archive file (careful, if a file already exists, it will be deleted)")
+            .index(2)
         )
         .arg(Arg::with_name("compression")
             .takes_value(true)
@@ -113,14 +115,15 @@ fn meta_subcommand() -> App<'static, 'static> {
 fn tree_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("tree")
         .visible_alias("t")
-        .about("Show the directory tree of the archive, as well as metadata about files")
+        .visible_alias("ls")
+        .about("Show the directory tree of the archive")
         .arg(
-            Arg::with_name("show-meta")
-                .short("m")
-                .long("meta")
-                .help("Show metadata along with file and directory entries")
-                .takes_value(false)
-                .multiple(false),
+            Arg::with_name("dir")
+                .short("d")
+                .index(2)
+                .help("Select the directory to view a directory tree of")
+                .multiple(false)
+                .takes_value(true),
         )
         .arg(input_archive_arg(1))
 }
@@ -184,7 +187,6 @@ fn main() {
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .arg(
             Arg::with_name("no-prog")
-                .short("np")
                 .long("no-prog")
                 .help("Disable progress bar rendering for all operations")
                 .multiple(false)
@@ -238,7 +240,7 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
         .open(output_file)?;
     let back = tempfile::tempfile().unwrap();
 
-    let mut barchiver = Bar::pack(input_dir, back, compression, args.is_present("no-prog"))?; //Pack the directory into a main file
+    let mut barchiver = Bar::pack(input_dir, back, compression, !args.is_present("no-prog"))?; //Pack the directory into a main file
     barchiver.save(&mut output)?;
 
     Ok(())
@@ -249,7 +251,7 @@ fn unpack(args: &ArgMatches) -> BarResult<()> {
     let input_file = args.value_of("input-file").unwrap();
     let output_dir = args.value_of("output-dir").unwrap();
     let mut barchiver = Bar::unpack(input_file)?; //Pack the directory into a main file
-    barchiver.save_unpacked(output_dir, args.is_present("no-prog"))?;
+    barchiver.save_unpacked(output_dir, !args.is_present("no-prog"))?;
 
     Ok(())
 }
@@ -305,14 +307,13 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
 
 /// Show a directory tree with metadata
 fn tree(args: &ArgMatches) -> BarResult<()> {
+    fn print_tabs(num: u16) {
+        (0..num).for_each(|_| print!("    "));
+        println!("|");
+        (0..num).for_each(|_| print!("    "));
+        print!("+ ");
+    }
     fn walk_dir(dir: &entry::Dir, nested: u16) {
-        fn print_tabs(num: u16) {
-            (0..num).for_each(|_| print!("    "));
-            println!("|");
-            (0..num).for_each(|_| print!("    "));
-            print!("+ ");
-        }
-
         print_tabs(nested);
         println!("{}", style(&dir.meta.name).bold().blue());
         for entry in dir.entries() {
@@ -327,9 +328,27 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
             }
         }
     }
-    let _ = args.is_present("show-meta");
+
     let bar = Bar::unpack(args.value_of("input-file").unwrap())?;
-    walk_dir(bar.root(), 0);
+
+    let dir = match args.value_of("dir") {
+        Some(dir) => match bar.dir(dir) {
+            Some(dir) => dir,
+            None => return Err(BarErr::NoEntry(dir.to_owned())),
+        },
+        None => bar.root(),
+    };
+    for entry in dir.entries() {
+        match entry {
+            entry::Entry::File(file) => {
+                println!("{}", style(&file.meta.name).green());
+            }
+            entry::Entry::Dir(d) => {
+                walk_dir(d, 0);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -347,7 +366,7 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
             item,
             &mut file,
             matches!(args.value_of("decompress").unwrap(), "on" | "true"),
-            args.is_present("no-prog"),
+            !args.is_present("no-prog"),
         )?;
 
         if args.is_present("update-as-used") {
@@ -355,7 +374,7 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
         }
     }
 
-    ar.save_updated(args.is_present("no-prog"))?;
+    ar.save_updated(!args.is_present("no-prog"))?;
     Ok(())
 }
 
@@ -412,6 +431,6 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
         _ => unreachable!(),
     }
 
-    bar.save_updated(args.is_present("no-prog"))?;
+    bar.save_updated(!args.is_present("no-prog"))?;
     Ok(())
 }

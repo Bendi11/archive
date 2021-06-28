@@ -1,6 +1,5 @@
 use bar::ar::Bar;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use indicatif::ProgressBar;
 use std::io::Cursor;
 
 fn pack_nocompress(c: &mut Criterion) {
