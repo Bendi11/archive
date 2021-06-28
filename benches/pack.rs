@@ -14,7 +14,7 @@ fn pack_nocompress(c: &mut Criterion) {
                     false,
                 ))
                 .unwrap();
-                black_box(bar.save(&mut file)).unwrap();
+                black_box(bar.save(&mut file, false)).unwrap();
             },
         )
     });

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use flate2::write::{DeflateEncoder, GzEncoder};
+use indicatif::ProgressBar;
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom, Write},
@@ -106,22 +107,45 @@ impl File {
         off: &mut u64,
         writer: &mut W,
         reader: &mut R,
+        prog: &ProgressBar
     ) -> std::io::Result<Entry> {
+        prog.set_message(format!("Saving file {}", self.meta.name));
+
+        let this_prog = match prog.is_hidden() {
+            true => ProgressBar::new(0).with_style(indicatif::ProgressStyle::default_bar()
+                .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}")
+                .progress_chars("=>-"),
+            ),
+            false => ProgressBar::hidden()
+        };
+
         reader.seek(SeekFrom::Start(self.off))?;
         let mut buf = vec![0u8; self.size as usize];
-        reader.read_exact(&mut buf)?;
+
+        this_prog.set_message("Reading file data from archive");
+        this_prog.wrap_read(reader).read_exact(&mut buf)?;
+        this_prog.reset();
+
 
         //Compress bytes if it is desired
         let bytes = match self.compression {
             CompressType(quality, CompressMethod::Deflate) => {
                 let mut encoder = DeflateEncoder::new(Vec::new(), quality);
-                encoder.write_all(buf.as_slice())?;
+
+                this_prog.set_message("Decompressing DEFLATE compressed data");
+                this_prog.wrap_write(&mut encoder).write_all(buf.as_slice())?;
+                this_prog.reset();
                 drop(buf);
+
                 encoder.finish()?
             }
             CompressType(quality, CompressMethod::Gzip) => {
                 let mut encoder = GzEncoder::new(Vec::new(), quality);
-                encoder.write_all(buf.as_slice())?;
+                
+                this_prog.set_message("Decompressing gzip compressed data");
+                this_prog.wrap_write(&mut encoder).write_all(buf.as_slice())?;
+                this_prog.reset();
+
                 drop(buf);
                 encoder.finish()?
             }
@@ -134,7 +158,11 @@ impl File {
             size: bytes.len() as u32,
             compression: self.compression,
         });
-        std::io::copy(&mut bytes.as_slice(), writer)?; //Copy file data to the writer
+
+        this_prog.set_message("Writing decompressed bytes");
+        std::io::copy(&mut bytes.as_slice(), &mut this_prog.wrap_write(writer))?; //Copy file data to the writer
+        this_prog.finish_and_clear();
+
         *off += bytes.len() as u64;
         drop(bytes);
         Ok(ret)
@@ -165,6 +193,7 @@ impl Dir {
         off: &mut u64,
         writer: &mut W,
         reader: &mut R,
+        prog: &ProgressBar
     ) -> std::io::Result<Entry> {
         Ok(Entry::Dir(Self {
             meta: self.meta.clone(),
@@ -172,7 +201,7 @@ impl Dir {
                 .data
                 .iter()
                 .map(
-                    |(key, val)| match val.write_file_data(off, writer, reader) {
+                    |(key, val)| match val.write_file_data(off, writer, reader, prog) {
                         Ok(val) => Ok((key.clone(), val)),
                         Err(e) => Err(e),
                     },
@@ -268,10 +297,11 @@ impl Entry {
         off: &mut u64,
         writer: &mut W,
         reader: &mut R,
+        prog: &ProgressBar
     ) -> std::io::Result<Entry> {
         match self {
-            Self::Dir(dir) => dir.write_data(off, writer, reader),
-            Self::File(file) => file.write_data(off, writer, reader),
+            Self::Dir(dir) => dir.write_data(off, writer, reader, prog),
+            Self::File(file) => file.write_data(off, writer, reader, prog),
         }
     }
 

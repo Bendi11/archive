@@ -651,7 +651,7 @@ mod tests {
         let back = io::Cursor::new(vec![0u8; 2048]);
         let mut thing = Bar::pack("test", back, "high-gzip".parse().unwrap(), false).unwrap();
         let mut file = io::BufWriter::new(std::fs::File::create("./archive.bar").unwrap());
-        thing.save(&mut file).unwrap();
+        thing.save(&mut file, false).unwrap();
         drop(thing);
         drop(file);
         let mut reader = Bar::unpack("./archive.bar").unwrap();

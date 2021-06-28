@@ -331,7 +331,7 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
     let back = tempfile::tempfile().unwrap();
 
     let mut barchiver = Bar::pack(input_dir, back, compression, !args.is_present("no-prog"))?; //Pack the directory into a main file
-    barchiver.save(&mut output)?;
+    barchiver.save(&mut output, !args.is_present("no-prog"))?;
 
     Ok(())
 }

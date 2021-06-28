@@ -132,13 +132,18 @@ impl<S: io::Read + io::Seek> Bar<S> {
     }
 
     /// Save this archive to any type implementing `Write`, compressing files as needed
-    pub fn save<W: io::Write>(&mut self, writer: &mut W) -> BarResult<()> {
+    pub fn save<W: io::Write>(&mut self, writer: &mut W, prog: bool) -> BarResult<()> {
+        let prog = match prog {
+            true => ProgressBar::new_spinner().with_style(ProgressStyle::default_spinner().tick_chars(".,'`*@*`',")),
+            false => ProgressBar::hidden(),
+        };
+
         self.data.seek(SeekFrom::Start(0))?;
         let mut data_size = 0u64;
         let root = match self
             .header
             .root
-            .write_data(&mut data_size, writer, &mut self.data)?
+            .write_data(&mut data_size, writer, &mut self.data, &prog)?
         {
             Entry::Dir(dir) => dir,
             _ => unreachable!(),
