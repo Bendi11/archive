@@ -169,7 +169,6 @@ impl File {
 
         *off += bytes.len() as u64;
         drop(bytes);
-
         Ok(ret)
     }
 
