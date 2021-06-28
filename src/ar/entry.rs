@@ -139,6 +139,14 @@ impl File {
         drop(bytes);
         Ok(ret)
     }
+
+    pub const fn off(&self) -> u64 {
+        self.off
+    }
+
+    pub const fn size(&self) -> u32 {
+        self.size
+    }
 }
 
 /// The `Dir` entry is used in the [Dir](Entry::Dir) entry variant and contains [File]s and [Dir]s in it

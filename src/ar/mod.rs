@@ -227,6 +227,7 @@ impl Bar<std::fs::File> {
 
         prog.set_message("Re-writing updated header values to file");
         rmpv::encode::write_value(&mut prog.wrap_write(&mut self.data), &val)?;
+        prog.finish_and_clear();
         self.data.write_u64::<LittleEndian>(header_pos)?;
         self.data.flush()?;
         Ok(())

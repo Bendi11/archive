@@ -7,6 +7,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use rmpv::Value;
 use std::{
     collections::HashMap,
@@ -287,6 +288,17 @@ impl<S: Read + Seek> Bar<S> {
                     vec.push(Entry::Dir(directory));
                 }
                 false => {
+                    let read_prog = match prog.is_hidden() {
+                        true => ProgressBar::hidden(),
+                        false => ProgressBar::new(0).with_style(
+                            ProgressStyle::default_bar()
+                                .template(
+                                    "[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}",
+                                )
+                                .progress_chars("=>-"),
+                        ),
+                    };
+
                     let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
                     let size = data.metadata()?.len();
 
@@ -297,12 +309,13 @@ impl<S: Read + Seek> Bar<S> {
                         meta,
                     };
                     *off += size;
-                    std::io::copy(&mut data, writer)?;
+                    std::io::copy(&mut read_prog.wrap_read(&mut data), writer)?;
+                    read_prog.finish_and_clear();
                     vec.push(Entry::File(file))
                 }
             }
 
-            prog.inc(1);
+            prog.tick();
         }
         Ok(vec)
     }
@@ -552,7 +565,11 @@ impl<S: Read + Seek> Bar<S> {
         prog: bool,
     ) -> BarResult<()> {
         let prog = match prog {
-            true => ProgressBar::new(file.size as u64),
+            true => ProgressBar::new(file.size as u64).with_style(
+                ProgressStyle::default_bar()
+                    .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}")
+                    .progress_chars("=>-"),
+            ),
             false => ProgressBar::hidden(),
         };
 
@@ -585,6 +602,7 @@ impl<S: Read + Seek> Bar<S> {
             false => data,
         };
         io::copy(&mut bytes.as_slice(), &mut prog.wrap_write(writer))?;
+        prog.finish_and_clear();
 
         Ok(())
     }
@@ -597,12 +615,12 @@ impl<S: Read + Seek> Bar<S> {
         prog: bool,
     ) -> BarResult<()> {
         let path = dir.join(entry.name());
-        //Self::save_meta_to_file(&path, entry.meta())?;
 
         match entry {
             Entry::Dir(dir) => {
                 let dirprog = match prog {
-                    true => ProgressBar::new(dir.data.len() as u64),
+                    true => ProgressBar::new(dir.data.len() as u64)
+                        .with_style(ProgressStyle::default_bar().progress_chars("=>-")),
                     false => ProgressBar::hidden(),
                 };
 
