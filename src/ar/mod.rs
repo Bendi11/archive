@@ -109,7 +109,6 @@ impl<S: io::Read + io::Seek> Bar<S> {
         let mut metafile = std::fs::File::create(metafile)?;
         rmpv::encode::write_value(&mut metafile, &metadata)?;
 
-        //Self::save_meta_to_file(metafile.as_ref(), &self.header.meta, )?; //Save header metadata to a file
         for (_, entry) in self.header.root.data.iter() {
             Self::save_entry(dir.as_ref(), entry, &mut self.data)?;
         }

@@ -1,11 +1,11 @@
-use bar::ar::{Bar, BarResult, entry};
+use bar::ar::{Bar, BarErr, BarResult, entry::{self, Entry}};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use console::style;
 use std::{fs, path::Path};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
 /// value
-fn input_archive_arg() -> Arg<'static, 'static> {
+fn input_archive_arg(idx: u64) -> Arg<'static, 'static> {
     Arg::with_name("input-file")
         .help("Select a full or relative path to an input bar archive")
         .required(true)
@@ -14,6 +14,7 @@ fn input_archive_arg() -> Arg<'static, 'static> {
         .validator(file_exists)
         .long("input-file")
         .short("i")
+        .index(idx)
 }
 
 /// Validator for path inputs
@@ -25,15 +26,17 @@ fn file_exists(s: String) -> Result<(), String> {
 }
 
 /// Output directory argument
-fn output_dir_arg() -> Arg<'static, 'static> {
+fn output_dir_arg(idx: u64) -> Arg<'static, 'static> {
     Arg::with_name("output-dir")
-        .help("Select a full or relative path to the directory that output files will be written to")
+        .help("Select a full or relative path to the directory that output files will be written to. Requires the directory to exist")
+        .next_line_help(true)
         .takes_value(true)
         .multiple(false)
         .required(true)
         .long("output-dir")
         .short("o")
         .validator(file_exists)
+        .index(idx)
 }
 
 /// Create the `pack` subcommand
@@ -82,8 +85,8 @@ fn unpack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("unpack")
         .visible_alias("u")
         .about("Unpack a .bar archive into a directory")
-        .arg(input_archive_arg())
-        .arg(output_dir_arg())
+        .arg(input_archive_arg(1))
+        .arg(output_dir_arg(2))
 }
 
 fn meta_subcommand() -> App<'static, 'static> {
@@ -95,12 +98,12 @@ fn meta_subcommand() -> App<'static, 'static> {
             .help("A list of paths to fetch the metadata of")
             .multiple(true)
             .takes_value(true)
-            .index(1)
+            .index(2)
             .long("entry-paths")
             .required(true)
             .short("e")
         )
-        .arg(input_archive_arg())
+        .arg(input_archive_arg(1))
 }
 
 fn tree_subcommand() -> App<'static, 'static> {
@@ -114,13 +117,13 @@ fn tree_subcommand() -> App<'static, 'static> {
             .takes_value(false)
             .multiple(false)
         )
-        .arg(input_archive_arg())       
+        .arg(input_archive_arg(1))       
 }
 
 fn extract_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("extract")
         .about("Extract a file from a packed archive")
-        .arg(input_archive_arg())
+        .arg(input_archive_arg(1))
         .visible_alias("e")
         .arg(Arg::with_name("decompress")
             .short("d")
@@ -135,7 +138,7 @@ fn extract_subcommand() -> App<'static, 'static> {
             .help("A list of files to extract from the archive file")
             .short("e")
             .long("extract")
-            .index(1)
+            .index(3)
             .multiple(true)
             .takes_value(true)
             .required(true)
@@ -147,30 +150,54 @@ fn extract_subcommand() -> App<'static, 'static> {
             .long("consume")
             .short("c")
         )
-        .arg(output_dir_arg())
+        .arg(output_dir_arg(2))
+}
+
+fn edit_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("edit")
+        .visible_alias("ed")
+        .about("View or edit a specific entry's metadata like notes, use, and name")
+        .arg(input_archive_arg(1))
+        .arg(Arg::with_name("entry")
+            .short("e")
+            .long("entry")
+            .help("Path to a file or directory in the archive to edit the metadata of")
+            .required(true)
+            .multiple(false)
+            .takes_value(true)
+            .index(2)
+        )
 }
 
 fn main() {
     let app = App::new("bar")
-        .about("Barchiver\nUtitility to pack, unpack, and manipulate .bar archives")
+        .about("A utility to pack, unpack, and manipulate .bar archives")
         .author("Bendi11")
         .version(crate_version!())
         .setting(AppSettings::WaitOnError)
+        .setting(AppSettings::SubcommandRequiredElseHelp)
         .subcommand(pack_subcommand())
         .subcommand(unpack_subcommand())
         .subcommand(meta_subcommand())
         .subcommand(tree_subcommand())
         .subcommand(extract_subcommand())
+        .subcommand(edit_subcommand())
         ;
 
     let matches = app.get_matches();
-    match matches.subcommand() {
-        ("pack", Some(args)) => pack(args).unwrap(),
-        ("unpack", Some(args)) => unpack(args).unwrap(),
-        ("meta", Some(args)) => meta(args).unwrap(),
-        ("tree", Some(args)) => tree(args).unwrap(),
-        ("extract", Some(args)) => extract(args).unwrap(),
-        _ => (),
+    match match matches.subcommand() {
+        ("pack", Some(args)) => pack(args),
+        ("unpack", Some(args)) => unpack(args),
+        ("meta", Some(args)) => meta(args),
+        ("tree", Some(args)) => tree(args),
+        ("extract", Some(args)) => extract(args),
+        ("edit", Some(args)) => edit(args),
+        _ => unreachable!()
+    } {
+        Ok(()) => (),
+        Err(e) => {
+            eprintln!("{}{}", style(format!("An error occurred in subcommand {}: ", matches.subcommand().0)).bold().white(), style(e).red());
+        }
     }
 }
 
@@ -289,5 +316,56 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
         }
     }
     ar.save_updated()?;
+    Ok(())
+}
+
+/// Edit a specific entry's metadata
+fn edit(args: &ArgMatches) -> BarResult<()> {
+    let mut bar = Bar::unpack(args.value_of("input-file").unwrap())?;
+    let entry = match bar.entry_mut(args.value_of("entry").unwrap()) {
+        Some(f) => f,
+        None => return Err(BarErr::NoEntry(args.value_of("entry").unwrap().to_owned())),
+    };
+
+    let choice = dialoguer::Select::new()
+        .item("note")
+        .item("used")
+        .with_prompt("Select which attribute of metadata to edit")
+        .default(0)
+        .clear(true)
+        .interact()?;
+
+    match choice {
+        0 => {
+            let edit: String = dialoguer::Input::new()
+            .with_initial_text(entry.meta().note.as_ref().unwrap_or(&"".to_owned()))
+            .with_prompt(match entry {
+                Entry::File(f) => {
+                    format!("File {}", style(&f.meta.name).green())
+                },
+                Entry::Dir(d) => {
+                    format!("Directory {}", style(&d.meta.name).blue())
+                }
+            })
+            .allow_empty(true)
+            .interact_text()?;
+
+        entry.meta_mut().note = match edit.is_empty() {
+            true => None,
+            false => Some(edit)
+        };
+        },
+        1 => {
+            let choice = dialoguer::Confirm::new()
+                .with_prompt("Would you like to register this entry as used?")
+                .show_default(true)
+                .default(true)
+                .interact()?;
+            entry.meta_mut().used = choice;
+        },
+        _ => unreachable!()
+    }
+
+    bar.save_updated()?;
     Ok(())
 }

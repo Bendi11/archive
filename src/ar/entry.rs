@@ -312,6 +312,14 @@ impl Entry {
         }
     }
 
+    /// Get a mutable reference to this entry's metadata
+    pub fn meta_mut(&mut self) -> &mut Meta {
+        match self {
+            Self::File(f) => &mut f.meta,
+            Self::Dir(d) => &mut d.meta
+        }
+    }
+
     fn get_entry<'a>(
         &self,
         mut paths: impl Iterator<Item = path::Component<'a>>,
