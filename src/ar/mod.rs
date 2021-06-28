@@ -17,8 +17,13 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
         dir: impl AsRef<std::path::Path>,
         mut backend: S,
         compression: CompressType,
-        prog: ProgressBar,
+        prog: bool,
     ) -> BarResult<Self> {
+        let prog = match prog {
+            true => ProgressBar::new_spinner()
+                .with_style(ProgressStyle::default_spinner().tick_chars(".,'`*@*`',")),
+            false => ProgressBar::hidden(),
+        };
         let dir = dir.as_ref();
         let mut off = 0u64; //The current offset into the backing storage
 

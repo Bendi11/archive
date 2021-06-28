@@ -499,23 +499,21 @@ impl<S: Read + Seek> Bar<S> {
         data.read_exact(&mut header_bytes)?;
 
         let header_val = rmpv::decode::read_value(&mut header_bytes.as_slice())?; //Read the value from the header bytes
-        let header_val = header_val
-            .as_array()
-            .ok_or_else(|| BarErr::InvalidHeaderFormat(format!(
+        let header_val = header_val.as_array().ok_or_else(|| {
+            BarErr::InvalidHeaderFormat(format!(
                 "The top level header is not an array, it is a {:?}",
                 header_val
-            )))?;
+            ))
+        })?;
         match (header_val.get(0), header_val.get(1)) {
             (Some(metadata), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
                 let dir = Self::read_dir_entry(root)?;
                 Ok(Header { meta, root: dir })
             }
-            _ => {
-                Err(BarErr::InvalidHeaderFormat(
-                    "The top level header array does not contain two elements".into(),
-                ))
-            }
+            _ => Err(BarErr::InvalidHeaderFormat(
+                "The top level header array does not contain two elements".into(),
+            )),
         }
     }
 
@@ -633,13 +631,7 @@ mod tests {
     #[test]
     pub fn test_write() {
         let back = io::Cursor::new(vec![0u8; 2048]);
-        let mut thing = Bar::pack(
-            "test",
-            back,
-            "high-gzip".parse().unwrap(),
-            ProgressBar::hidden(),
-        )
-        .unwrap();
+        let mut thing = Bar::pack("test", back, "high-gzip".parse().unwrap(), false).unwrap();
         let mut file = io::BufWriter::new(std::fs::File::create("./archive.bar").unwrap());
         thing.save(&mut file).unwrap();
         drop(thing);
@@ -653,12 +645,6 @@ mod tests {
         drop(reader);
 
         let back = io::Cursor::new(vec![0u8; 2048]);
-        let _packer = Bar::pack(
-            "output/test",
-            back,
-            "high-gzip".parse().unwrap(),
-            ProgressBar::hidden(),
-        )
-        .unwrap();
+        let _packer = Bar::pack("output/test", back, "high-gzip".parse().unwrap(), false).unwrap();
     }
 }

@@ -12,7 +12,7 @@ fn pack_nocompress(c: &mut Criterion) {
                     "./benches/test-in",
                     Cursor::new(vec![0u8; 2048]),
                     "none".parse().unwrap(),
-                    ProgressBar::hidden(),
+                    false,
                 ))
                 .unwrap();
                 black_box(bar.save(&mut file)).unwrap();

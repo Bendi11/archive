@@ -5,7 +5,6 @@ use bar::ar::{
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use console::{style, Color, Style};
 use dialoguer::theme::ColorfulTheme;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::{fs, path::Path};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
@@ -239,9 +238,7 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
         .open(output_file)?;
     let back = tempfile::tempfile().unwrap();
 
-    let prog = ProgressBar::new_spinner()
-        .with_style(ProgressStyle::default_spinner().tick_chars(".,'`*@*`',"));
-    let mut barchiver = Bar::pack(input_dir, back, compression, prog)?; //Pack the directory into a main file
+    let mut barchiver = Bar::pack(input_dir, back, compression, args.is_present("no-prog"))?; //Pack the directory into a main file
     barchiver.save(&mut output)?;
 
     Ok(())
