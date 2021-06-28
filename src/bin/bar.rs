@@ -1,7 +1,11 @@
-use bar::ar::{Bar, BarErr, BarResult, entry::{self, Entry}};
+use bar::ar::{
+    entry::{self, Entry},
+    Bar, BarErr, BarResult,
+};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
-use console::{Color, Style, style};
+use console::{style, Color, Style};
 use dialoguer::theme::ColorfulTheme;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::{fs, path::Path};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
@@ -79,7 +83,6 @@ fn pack_subcommand() -> App<'static, 'static> {
             ])
             .default_value("none")
         )
-
 }
 
 fn unpack_subcommand() -> App<'static, 'static> {
@@ -95,14 +98,15 @@ fn meta_subcommand() -> App<'static, 'static> {
         .about("View metadata of one file or directory")
         .visible_alias("m")
         .visible_alias("view")
-        .arg(Arg::with_name("entry-paths")
-            .help("A list of paths to fetch the metadata of")
-            .multiple(true)
-            .takes_value(true)
-            .index(2)
-            .long("entry-paths")
-            .required(true)
-            .short("e")
+        .arg(
+            Arg::with_name("entry-paths")
+                .help("A list of paths to fetch the metadata of")
+                .multiple(true)
+                .takes_value(true)
+                .index(2)
+                .long("entry-paths")
+                .required(true)
+                .short("e"),
         )
         .arg(input_archive_arg(1))
 }
@@ -111,14 +115,15 @@ fn tree_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("tree")
         .visible_alias("t")
         .about("Show the directory tree of the archive, as well as metadata about files")
-        .arg(Arg::with_name("show-meta")
-            .short("m")
-            .long("meta")
-            .help("Show metadata along with file and directory entries")
-            .takes_value(false)
-            .multiple(false)
+        .arg(
+            Arg::with_name("show-meta")
+                .short("m")
+                .long("meta")
+                .help("Show metadata along with file and directory entries")
+                .takes_value(false)
+                .multiple(false),
         )
-        .arg(input_archive_arg(1))       
+        .arg(input_archive_arg(1))
 }
 
 fn extract_subcommand() -> App<'static, 'static> {
@@ -159,14 +164,15 @@ fn edit_subcommand() -> App<'static, 'static> {
         .visible_alias("ed")
         .about("View or edit a specific entry's metadata like notes, use, and name")
         .arg(input_archive_arg(1))
-        .arg(Arg::with_name("entry")
-            .short("e")
-            .long("entry")
-            .help("Path to a file or directory in the archive to edit the metadata of")
-            .required(true)
-            .multiple(false)
-            .takes_value(true)
-            .index(2)
+        .arg(
+            Arg::with_name("entry")
+                .short("e")
+                .long("entry")
+                .help("Path to a file or directory in the archive to edit the metadata of")
+                .required(true)
+                .multiple(false)
+                .takes_value(true)
+                .index(2),
         )
 }
 
@@ -177,13 +183,21 @@ fn main() {
         .version(crate_version!())
         .setting(AppSettings::WaitOnError)
         .setting(AppSettings::SubcommandRequiredElseHelp)
+        .arg(
+            Arg::with_name("no-prog")
+                .short("np")
+                .long("no-prog")
+                .help("Disable progress bar rendering for all operations")
+                .multiple(false)
+                .takes_value(false)
+                .global(true),
+        )
         .subcommand(pack_subcommand())
         .subcommand(unpack_subcommand())
         .subcommand(meta_subcommand())
         .subcommand(tree_subcommand())
         .subcommand(extract_subcommand())
-        .subcommand(edit_subcommand())
-        ;
+        .subcommand(edit_subcommand());
 
     let matches = app.get_matches();
     match match matches.subcommand() {
@@ -193,11 +207,20 @@ fn main() {
         ("tree", Some(args)) => tree(args),
         ("extract", Some(args)) => extract(args),
         ("edit", Some(args)) => edit(args),
-        _ => unreachable!()
+        _ => unreachable!(),
     } {
         Ok(()) => (),
         Err(e) => {
-            eprintln!("{}{}", style(format!("An error occurred in subcommand {}: ", matches.subcommand().0)).bold().white(), style(e).red());
+            eprintln!(
+                "{}{}",
+                style(format!(
+                    "An error occurred in subcommand {}: ",
+                    matches.subcommand().0
+                ))
+                .bold()
+                .white(),
+                style(e).red()
+            );
         }
     }
 }
@@ -216,7 +239,9 @@ fn pack(args: &ArgMatches) -> BarResult<()> {
         .open(output_file)?;
     let back = tempfile::tempfile().unwrap();
 
-    let mut barchiver = Bar::pack(input_dir, back, compression)?; //Pack the directory into a main file
+    let prog = ProgressBar::new_spinner()
+        .with_style(ProgressStyle::default_spinner().tick_chars(".,'`*@*`',"));
+    let mut barchiver = Bar::pack(input_dir, back, compression, prog)?; //Pack the directory into a main file
     barchiver.save(&mut output)?;
 
     Ok(())
@@ -227,7 +252,7 @@ fn unpack(args: &ArgMatches) -> BarResult<()> {
     let input_file = args.value_of("input-file").unwrap();
     let output_dir = args.value_of("output-dir").unwrap();
     let mut barchiver = Bar::unpack(input_file)?; //Pack the directory into a main file
-    barchiver.save_unpacked(output_dir)?;
+    barchiver.save_unpacked(output_dir, args.is_present("no-prog"))?;
 
     Ok(())
 }
@@ -240,14 +265,26 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
             (Some(file), _) => {
                 println!("{}{}", style("File: ").white(), style(arg).bold().green());
                 &file.meta
-            },
+            }
             (_, Some(dir)) => {
-                println!("{}{}", style("Directory: ").white(), style(arg).bold().blue());
+                println!(
+                    "{}{}",
+                    style("Directory: ").white(),
+                    style(arg).bold().blue()
+                );
                 &dir.meta
-            },
+            }
             (_, _) => {
-                eprintln!("{}", style(format!("File or directory {} does not exist in the archive", arg)).red().bold());
-                continue
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "File or directory {} does not exist in the archive",
+                        arg
+                    ))
+                    .red()
+                    .bold()
+                );
+                continue;
             }
         };
         if let Some(ref last_update) = meta.last_update {
@@ -256,19 +293,21 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
         if let Some(ref note) = meta.note {
             println!("{}{}", style("Note: ").bold(), note);
         }
-        println!("{}", match meta.used {
-            true => style("This file has been used").white(),
-            false => style("This file has not been used").color256(7),
-        });
+        println!(
+            "{}",
+            match meta.used {
+                true => style("This file has been used").white(),
+                false => style("This file has not been used").color256(7),
+            }
+        );
         println!("{}", style("\n==========\n").white().bold());
-
     }
 
     Ok(())
 }
 
 /// Show a directory tree with metadata
-fn tree(args: &ArgMatches) -> BarResult<()> { 
+fn tree(args: &ArgMatches) -> BarResult<()> {
     fn walk_dir(dir: &entry::Dir, nested: u16) {
         fn print_tabs(num: u16) {
             (0..num).for_each(|_| print!("    "));
@@ -276,7 +315,7 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
             (0..num).for_each(|_| print!("    "));
             print!("+ ");
         }
-        
+
         print_tabs(nested);
         println!("{}", style(&dir.meta.name).bold().blue());
         for entry in dir.entries() {
@@ -284,7 +323,7 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
                 entry::Entry::File(file) => {
                     print_tabs(nested + 1);
                     println!("{}", style(&file.meta.name).green());
-                },
+                }
                 entry::Entry::Dir(d) => {
                     walk_dir(d, nested + 1);
                 }
@@ -307,16 +346,19 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
     for item in args.values_of("extracted-files").unwrap() {
         let name: &path::Path = path::Path::new(&item).file_name().unwrap().as_ref();
         let mut file = fs::File::create(output.join(name))?;
-        ar.file_data(item, &mut file, match args.value_of("decompress").unwrap() {
-            "on" | "true" => true,
-            _ => false
-        })?;
+        ar.file_data(
+            item,
+            &mut file,
+            matches!(args.value_of("decompress").unwrap(), "on" | "true"),
+            args.is_present("no-prog"),
+        )?;
 
         if args.is_present("update-as-used") {
             ar.file_mut(item).unwrap().meta.used = true;
         }
     }
-    ar.save_updated()?;
+
+    ar.save_updated(args.is_present("no-prog"))?;
     Ok(())
 }
 
@@ -333,35 +375,35 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
         active_item_style: Style::new().bg(Color::Green).fg(Color::White),
         ..Default::default()
     })
-        .item("note")
-        .item("used")
-        .with_prompt("Select which attribute of metadata to edit")
-        .default(0)
-        .clear(true)
-        .interact()?;
+    .item("note")
+    .item("used")
+    .with_prompt("Select which attribute of metadata to edit")
+    .default(0)
+    .clear(true)
+    .interact()?;
 
     match choice {
         0 => {
             let edit: String = dialoguer::Input::with_theme(&ColorfulTheme {
                 ..Default::default()
             })
-                .with_initial_text(entry.meta().note.as_ref().unwrap_or(&"".to_owned()))
-                .with_prompt(match entry {
-                    Entry::File(f) => {
-                        format!("File {}", style(&f.meta.name).green())
-                    },
-                    Entry::Dir(d) => {
-                        format!("Directory {}", style(&d.meta.name).blue())
-                    }
-                })
-                .allow_empty(true)
-                .interact_text()?;
+            .with_initial_text(entry.meta().note.as_ref().unwrap_or(&"".to_owned()))
+            .with_prompt(match entry {
+                Entry::File(f) => {
+                    format!("File {}", style(&f.meta.name).green())
+                }
+                Entry::Dir(d) => {
+                    format!("Directory {}", style(&d.meta.name).blue())
+                }
+            })
+            .allow_empty(true)
+            .interact_text()?;
 
             entry.meta_mut().note = match edit.is_empty() {
                 true => None,
-                false => Some(edit)
+                false => Some(edit),
             };
-        },
+        }
         1 => {
             let choice = dialoguer::Confirm::new()
                 .with_prompt("Would you like to register this entry as used?")
@@ -369,10 +411,10 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
                 .default(true)
                 .interact()?;
             entry.meta_mut().used = choice;
-        },
-        _ => unreachable!()
+        }
+        _ => unreachable!(),
     }
 
-    bar.save_updated()?;
+    bar.save_updated(args.is_present("no-prog"))?;
     Ok(())
 }

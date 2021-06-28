@@ -1,30 +1,30 @@
 pub mod bar;
 pub mod entry;
 
-pub use bar::{
-    Bar, BarResult, BarErr
-};
-use bar::{
-    Header, ser_header, 
-};
-use byteorder::{WriteBytesExt, LittleEndian};
+use bar::{ser_header, Header};
+pub use bar::{Bar, BarErr, BarResult};
+use byteorder::{LittleEndian, WriteBytesExt};
+use indicatif::{ProgressBar, ProgressStyle};
 
+use entry::{CompressType, Entry, Meta};
 use std::io::{self, Seek, SeekFrom, Write};
-use entry::{
-    CompressType, Meta, Entry,
-};
 
 impl<S: io::Read + io::Write + io::Seek> Bar<S> {
     /// Pack an entire directory into a `Bar` struct using a given compression method for every file
     /// This function takes an absolute or relative path to a directory that will be packed, the directory
     /// name will be used as the archive's name
-    pub fn pack(dir: impl AsRef<std::path::Path>, mut backend: S, compression: CompressType) -> BarResult<Self> {
+    pub fn pack(
+        dir: impl AsRef<std::path::Path>,
+        mut backend: S,
+        compression: CompressType,
+        prog: ProgressBar,
+    ) -> BarResult<Self> {
         let dir = dir.as_ref();
         let mut off = 0u64; //The current offset into the backing storage
 
         let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
         let root_meta = if let Some(meta) = meta.get("/") {
-           meta.clone()
+            meta.clone()
         } else {
             Meta {
                 name: dir.file_name().unwrap().to_str().unwrap().to_owned(),
@@ -45,7 +45,8 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
                         &mut off,
                         &mut backend,
                         &meta,
-                        compression
+                        compression,
+                        &prog,
                     )?
                     .into_iter()
                     .map(|entry| (entry.name(), entry))
@@ -55,7 +56,6 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
             data: backend,
         })
     }
-
 }
 
 impl<S: io::Read + io::Seek> Bar<S> {
@@ -73,7 +73,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
         self.header.root.entry_mut(path)
     }
 
-    /// Get an entry and ensure that is a [File](entry::File), returning `None` if either 
+    /// Get an entry and ensure that is a [File](entry::File), returning `None` if either
     /// the entry does not exist or if the entry is not a file
     #[inline]
     pub fn file_mut(&mut self, path: impl AsRef<std::path::Path>) -> Option<&mut entry::File> {
@@ -99,7 +99,11 @@ impl<S: io::Read + io::Seek> Bar<S> {
     }
 
     /// Save this archive to a directory, decompressing all contained files
-    pub fn save_unpacked(&mut self, path: impl AsRef<std::path::Path>) -> BarResult<()> {
+    pub fn save_unpacked(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        prog: bool,
+    ) -> BarResult<()> {
         let path = path.as_ref();
         let dir = path.join(self.header.meta.name.clone());
         std::fs::create_dir_all(dir.clone())?; //Create the dir to save unpacked files to
@@ -110,12 +114,13 @@ impl<S: io::Read + io::Seek> Bar<S> {
         rmpv::encode::write_value(&mut metafile, &metadata)?;
 
         for (_, entry) in self.header.root.data.iter() {
-            Self::save_entry(dir.as_ref(), entry, &mut self.data)?;
+            Self::save_entry(dir.as_ref(), entry, &mut self.data, prog)?;
         }
 
         Ok(())
     }
 
+    /// Get a reference to a file contained in this archive if the file exists
     #[inline]
     pub fn file(&self, path: impl AsRef<std::path::Path>) -> Option<&entry::File> {
         self.header.root.entry(path).map(|e| e.as_file()).flatten()
@@ -143,7 +148,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
     }
 
     /// Unpack a packed archive from a file or other storage, like an in-memory byte array.
-    /// See also [unpack](fn@Bar::unpack) 
+    /// See also [unpack](fn@Bar::unpack)
     pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
         let header = Self::read_header(&mut storage)?;
         Ok(Self {
@@ -165,9 +170,18 @@ impl<S: io::Read + io::Seek> Bar<S> {
     }
 
     /// Write file data to a writer if the file exists, optionally decompressing the file's data
-    pub fn file_data(&mut self, path: impl AsRef<std::path::Path>, w: &mut impl io::Write, decompress: bool) -> BarResult<()> {
-        let file = self.file(path.as_ref()).ok_or_else(|| BarErr::NoEntry(path.as_ref().to_str().unwrap().to_owned()))?.clone();
-        Self::save_file(&file, w, &mut self.data, decompress)
+    pub fn file_data(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        w: &mut impl io::Write,
+        decompress: bool,
+        prog: bool,
+    ) -> BarResult<()> {
+        let file = self
+            .file(path.as_ref())
+            .ok_or_else(|| BarErr::NoEntry(path.as_ref().to_str().unwrap().to_owned()))?
+            .clone();
+        Self::save_file(&file, w, &mut self.data, decompress, prog)
     }
 }
 
@@ -184,17 +198,30 @@ impl Bar<std::fs::File> {
     /// ```
     pub fn unpack(file: impl AsRef<std::path::Path>) -> BarResult<Self> {
         let file = file.as_ref();
-        let file = std::fs::OpenOptions::new().write(true).read(true).open(file)?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .open(file)?;
         Self::unpack_reader(file)
     }
 
     /// Re-save a bar file with updated metadata
-    pub fn save_updated(mut self) -> BarResult<()> {
+    pub fn save_updated(mut self, prog: bool) -> BarResult<()> {
         let (header_pos, _) = Self::get_header_pos(&mut self.data)?;
         self.data.set_len(header_pos)?; //Truncate the underlying file to erase the file data size and header data
         self.data.seek(io::SeekFrom::End(0))?;
         let val = bar::ser_header(&self.header); //Serialize our header with updated metadata
-        rmpv::encode::write_value(&mut self.data, &val)?;
+
+        let prog = match prog {
+            true => ProgressBar::new(0).with_style(
+                ProgressStyle::default_bar()
+                    .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}"),
+            ),
+            false => ProgressBar::hidden(),
+        };
+
+        prog.set_message("Re-writing updated header values to file");
+        rmpv::encode::write_value(&mut prog.wrap_write(&mut self.data), &val)?;
         self.data.write_u64::<LittleEndian>(header_pos)?;
         self.data.flush()?;
         Ok(())

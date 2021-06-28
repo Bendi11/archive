@@ -1,5 +1,6 @@
 use bar::ar::Bar;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use indicatif::ProgressBar;
 use std::io::Cursor;
 
 fn pack_nocompress(c: &mut Criterion) {
@@ -7,9 +8,13 @@ fn pack_nocompress(c: &mut Criterion) {
         b.iter_with_setup(
             || std::io::BufWriter::new(std::fs::File::create("./benches/test-out.bar").unwrap()),
             |mut file| {
-                let mut bar =
-                    black_box(Bar::pack("./benches/test-in", Cursor::new(vec![0u8; 2048]), "none".parse().unwrap()))
-                        .unwrap();
+                let mut bar = black_box(Bar::pack(
+                    "./benches/test-in",
+                    Cursor::new(vec![0u8; 2048]),
+                    "none".parse().unwrap(),
+                    ProgressBar::hidden(),
+                ))
+                .unwrap();
                 black_box(bar.save(&mut file)).unwrap();
             },
         )

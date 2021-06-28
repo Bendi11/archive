@@ -1,10 +1,12 @@
 //! The `ar` module provides structs representing a bar archive file that can be deserialized and serilialzed
 //!
 
+use super::entry;
+use super::entry::Entry;
 use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use super::entry::Entry;
 use flate2::read::{DeflateDecoder, GzDecoder};
+use indicatif::ProgressBar;
 use rmpv::Value;
 use std::{
     collections::HashMap,
@@ -14,9 +16,8 @@ use std::{
     str::FromStr,
 };
 use thiserror::Error;
-use super::entry;
 
-use crate::ar::entry::{CompressType, Dir, Meta, CompressMethod};
+use crate::ar::entry::{CompressMethod, CompressType, Dir, Meta};
 
 /// The `Bar` struct contains methods to read, manipulate and create `bar` files
 /// using any type that implements `Seek`, `Read` and `Write`
@@ -131,10 +132,7 @@ pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
 }
 
 pub(super) fn ser_header(header: &Header) -> Value {
-    Value::Array(vec![
-        ser_meta(&header.meta),
-        ser_direntry(&header.root),
-    ])
+    Value::Array(vec![ser_meta(&header.meta), ser_direntry(&header.root)])
 }
 
 /// Create a file value from a `File` entry
@@ -181,7 +179,7 @@ impl Bar<io::Cursor<Vec<u8>>> {
     }
 }
 
-impl<S: Read+ Seek> Bar<S> {
+impl<S: Read + Seek> Bar<S> {
     /// The file name of a metadata file in uncompressed archives
     pub(super) const ROOT_METADATA_FILE: &'static str = ".__barmeta.msgpack";
 
@@ -228,7 +226,7 @@ impl<S: Read+ Seek> Bar<S> {
         let val = val.as_map().ok_or_else(|| {
             BarErr::BadMetadataFile("Entry metadata file's main content is not a map".into())
         })?;
-        val.into_iter()
+        val.iter()
             .map(|(path, meta)| -> BarResult<_> {
                 let path = path.as_str().ok_or_else(|| {
                     BarErr::BadMetadataFile("The keys for metada's map are not strings".into())
@@ -246,11 +244,14 @@ impl<S: Read+ Seek> Bar<S> {
         writer: &mut W,
         meta_vec: &HashMap<String, Meta>,
         compress: CompressType,
+        prog: &ProgressBar,
     ) -> BarResult<Vec<Entry>> {
         let mut vec = vec![];
 
         for file in std::fs::read_dir(dir)? {
             let file = file?;
+            prog.set_message(format!("Writing file {} to archive", file.path().display()));
+
             let name = file.file_name().to_str().unwrap().to_owned();
 
             if name == Self::ROOT_METADATA_FILE {
@@ -259,26 +260,29 @@ impl<S: Read+ Seek> Bar<S> {
 
             //See if we have any metadata files to go with this one
             let meta = match meta_vec.get(&file.path().to_str().unwrap().replace("\\", "/")) {
-                Some(meta) => {
-                    meta.clone()
-                }
-                None => {
-                    Meta {
-                        name: name.clone(),
-                        last_update: Some(Utc::now()),
-                        ..Default::default()
-                    }
-                }
+                Some(meta) => meta.clone(),
+                None => Meta {
+                    name: name.clone(),
+                    last_update: Some(Utc::now()),
+                    ..Default::default()
+                },
             };
 
             match file.metadata().unwrap().is_dir() {
                 true => {
                     let directory = entry::Dir {
                         meta,
-                        data: Self::pack_read_dir(&file.path(), off, writer, meta_vec, compress)?
-                            .into_iter()
-                            .map(|entry| (entry.name(), entry))
-                            .collect(),
+                        data: Self::pack_read_dir(
+                            &file.path(),
+                            off,
+                            writer,
+                            meta_vec,
+                            compress,
+                            prog,
+                        )?
+                        .into_iter()
+                        .map(|entry| (entry.name(), entry))
+                        .collect(),
                     };
                     vec.push(Entry::Dir(directory));
                 }
@@ -297,10 +301,12 @@ impl<S: Read+ Seek> Bar<S> {
                     vec.push(Entry::File(file))
                 }
             }
+
+            prog.inc(1);
         }
         Ok(vec)
     }
-    
+
     /// Read a file entry from the header
     pub(super) fn read_file_entry(val: &Value) -> BarResult<entry::File> {
         let val = val.as_map().ok_or_else(|| {
@@ -495,7 +501,7 @@ impl<S: Read+ Seek> Bar<S> {
         let header_val = rmpv::decode::read_value(&mut header_bytes.as_slice())?; //Read the value from the header bytes
         let header_val = header_val
             .as_array()
-            .ok_or(BarErr::InvalidHeaderFormat(format!(
+            .ok_or_else(|| BarErr::InvalidHeaderFormat(format!(
                 "The top level header is not an array, it is a {:?}",
                 header_val
             )))?;
@@ -506,7 +512,7 @@ impl<S: Read+ Seek> Bar<S> {
                 Ok(Header { meta, root: dir })
             }
             _ => {
-                return Err(BarErr::InvalidHeaderFormat(
+                Err(BarErr::InvalidHeaderFormat(
                     "The top level header array does not contain two elements".into(),
                 ))
             }
@@ -540,61 +546,84 @@ impl<S: Read+ Seek> Bar<S> {
     }
 
     /// Save a file's contents to a Writer, optionally decompressing the file's data
-    pub(super) fn save_file(file: &entry::File, writer: &mut impl Write, back: &mut S, decompress: bool) -> BarResult<()> {
+    pub(super) fn save_file(
+        file: &entry::File,
+        writer: &mut impl Write,
+        back: &mut S,
+        decompress: bool,
+        prog: bool,
+    ) -> BarResult<()> {
+        let prog = match prog {
+            true => ProgressBar::new(file.size as u64),
+            false => ProgressBar::hidden(),
+        };
+
         let mut data = vec![0u8; file.size as usize];
         back.seek(SeekFrom::Start(file.off))?;
-        back.read_exact(&mut data)?;
+        prog.wrap_read(back).read_exact(&mut data)?;
+        prog.reset();
+
+        prog.set_message(format!("Saving file {}", file.meta.name));
 
         let bytes = match decompress {
-            true => {
-                match file.compression {
-                    CompressType(_, CompressMethod::Deflate) => {
-                        
-                        let mut encoder = DeflateDecoder::new(data.as_slice());
-                        
-                        let mut decoded = Vec::with_capacity(file.size as usize);
-                        encoder.read_to_end(&mut decoded)?;
-                        drop(data);
-                        decoded
-                    },
-                    CompressType(_, CompressMethod::Gzip) => {
-                        let mut encoder = GzDecoder::new(data.as_slice());
-                        let mut decoded = Vec::with_capacity(file.size as usize);
-                        encoder.read_to_end(&mut decoded)?;
-                        drop(data);
-                        decoded
-                    },
-                    CompressType(_, CompressMethod::None) => data
+            true => match file.compression {
+                CompressType(_, CompressMethod::Deflate) => {
+                    let mut encoder = DeflateDecoder::new(data.as_slice());
+
+                    let mut decoded = Vec::with_capacity(file.size as usize);
+                    encoder.read_to_end(&mut decoded)?;
+                    drop(data);
+                    decoded
                 }
+                CompressType(_, CompressMethod::Gzip) => {
+                    let mut encoder = GzDecoder::new(data.as_slice());
+                    let mut decoded = Vec::with_capacity(file.size as usize);
+                    encoder.read_to_end(&mut decoded)?;
+                    drop(data);
+                    decoded
+                }
+                CompressType(_, CompressMethod::None) => data,
             },
-            false => data
+            false => data,
         };
-        io::copy(&mut bytes.as_slice(), writer)?;
-        
+        io::copy(&mut bytes.as_slice(), &mut prog.wrap_write(writer))?;
+
         Ok(())
     }
 
     /// Save an entry to a file or to a folder if it is a [Dir](Entry::Dir), used to save an unpacked directory
-    pub(super) fn save_entry(dir: &std::path::Path, entry: &Entry, back: &mut S) -> BarResult<()> {
+    pub(super) fn save_entry(
+        dir: &std::path::Path,
+        entry: &Entry,
+        back: &mut S,
+        prog: bool,
+    ) -> BarResult<()> {
         let path = dir.join(entry.name());
         //Self::save_meta_to_file(&path, entry.meta())?;
 
         match entry {
             Entry::Dir(dir) => {
+                let dirprog = match prog {
+                    true => ProgressBar::new(dir.data.len() as u64),
+                    false => ProgressBar::hidden(),
+                };
+
+                dirprog.set_message(format!("Saving directory {}", dir.meta.name));
                 std::fs::create_dir_all(path.clone())?;
                 for (_, file) in dir.data.iter() {
-                    Self::save_entry(path.as_ref(), file, back)?;
+                    Self::save_entry(path.as_ref(), file, back, prog)?;
+                    dirprog.inc(1);
                 }
+                dirprog.finish_and_clear();
             }
             Entry::File(file) => {
                 let mut file_data = std::fs::File::create(path)?;
-                Self::save_file(file, &mut file_data, back, true)?;
+                Self::save_file(file, &mut file_data, back, true, prog)?;
             }
         }
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -604,7 +633,13 @@ mod tests {
     #[test]
     pub fn test_write() {
         let back = io::Cursor::new(vec![0u8; 2048]);
-        let mut thing = Bar::pack("test", back, "high-gzip".parse().unwrap()).unwrap();
+        let mut thing = Bar::pack(
+            "test",
+            back,
+            "high-gzip".parse().unwrap(),
+            ProgressBar::hidden(),
+        )
+        .unwrap();
         let mut file = io::BufWriter::new(std::fs::File::create("./archive.bar").unwrap());
         thing.save(&mut file).unwrap();
         drop(thing);
@@ -614,10 +649,16 @@ mod tests {
         file.meta.note = Some("This is a testing note about the file test.txt testing".into());
         drop(file);
 
-        reader.save_unpacked("output").unwrap();
+        reader.save_unpacked("output", false).unwrap();
         drop(reader);
 
         let back = io::Cursor::new(vec![0u8; 2048]);
-        let _packer = Bar::pack("output/test", back, "high-gzip".parse().unwrap()).unwrap();
+        let _packer = Bar::pack(
+            "output/test",
+            back,
+            "high-gzip".parse().unwrap(),
+            ProgressBar::hidden(),
+        )
+        .unwrap();
     }
 }

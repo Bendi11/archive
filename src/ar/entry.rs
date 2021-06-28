@@ -25,21 +25,21 @@ impl std::str::FromStr for CompressType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.to_lowercase().as_str() == "none" {
-            return Ok(Self(flate2::Compression::none(), CompressMethod::None))
+            return Ok(Self(flate2::Compression::none(), CompressMethod::None));
         }
-        
+
         let s = s.to_lowercase();
-        let (quality, method) = s.split_once("-").ok_or(s.to_owned())?;
+        let (quality, method) = s.split_once("-").ok_or_else(|| s.to_owned())?;
         let quality = match quality {
             "high" => flate2::Compression::best(),
             "fast" => flate2::Compression::fast(),
             "medium" => flate2::Compression::new(5),
-            other => return Err(other.to_string())
+            other => return Err(other.to_string()),
         };
         let method = match method {
             "gzip" => CompressMethod::Gzip,
             "deflate" => CompressMethod::Deflate,
-            _ => return Err(s.to_owned())
+            _ => return Err(s.to_owned()),
         };
 
         Ok(Self(quality, method))
@@ -49,13 +49,13 @@ impl std::str::FromStr for CompressType {
 impl ToString for CompressType {
     fn to_string(&self) -> String {
         if self.1 == CompressMethod::None {
-            return "none".into()
+            return "none".into();
         }
         let quality = match self.0.level() {
             9 => "high",
             1 => "fast",
             5 => "medium",
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         let method = match self.1 {
@@ -118,14 +118,14 @@ impl File {
                 encoder.write_all(buf.as_slice())?;
                 drop(buf);
                 encoder.finish()?
-            },
+            }
             CompressType(quality, CompressMethod::Gzip) => {
                 let mut encoder = GzEncoder::new(Vec::new(), quality);
                 encoder.write_all(buf.as_slice())?;
                 drop(buf);
                 encoder.finish()?
-            },
-            CompressType(_, CompressMethod::None) => buf
+            }
+            CompressType(_, CompressMethod::None) => buf,
         };
 
         let ret = Entry::File(Self {
@@ -209,11 +209,11 @@ impl Dir {
     }
 
     #[inline]
-    pub fn entry<'a>(&self, paths: impl AsRef<path::Path>) -> Option<&Entry> {
+    pub fn entry(&self, paths: impl AsRef<path::Path>) -> Option<&Entry> {
         self.get_entry(paths.as_ref().components())
     }
     #[inline]
-    pub fn entry_mut<'a>(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
+    pub fn entry_mut(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
         self.get_entry_mut(paths.as_ref().components())
     }
 
@@ -243,14 +243,14 @@ impl Entry {
     /// a.txt, then calling `get_entry` on the top directory with the path
     /// 'test/a.txt' will return `Some` with the file's data
     #[inline]
-    pub fn entry<'a>(&self, paths: impl AsRef<path::Path>) -> Option<&Entry> {
+    pub fn entry(&self, paths: impl AsRef<path::Path>) -> Option<&Entry> {
         self.get_entry(paths.as_ref().components())
     }
 
     /// Get a mutable reference to an `Entry`.
     /// For more information, see [get_entry](Entry::get_entry)
     #[inline]
-    pub fn entry_mut<'a>(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
+    pub fn entry_mut(&mut self, paths: impl AsRef<path::Path>) -> Option<&mut Entry> {
         self.get_entry_mut(paths.as_ref().components())
     }
 
@@ -316,7 +316,7 @@ impl Entry {
     pub fn meta_mut(&mut self) -> &mut Meta {
         match self {
             Self::File(f) => &mut f.meta,
-            Self::Dir(d) => &mut d.meta
+            Self::Dir(d) => &mut d.meta,
         }
     }
 
