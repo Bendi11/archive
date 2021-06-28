@@ -252,7 +252,7 @@ fn print_entry(entry: &Entry) {
         }
     };
     if let Some(ref last_update) = meta.last_update {
-        println!("Last updated on {}", last_update.format("%v at %r"))
+        println!("Last updated on {}", last_update.naive_local().format("%v at %r"))
     }
     if let Some(ref note) = meta.note {
         println!("{}{}", style("Note: ").bold(), note);
@@ -460,12 +460,12 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
     };
 
     let choice = dialoguer::Select::with_theme(&ColorfulTheme {
-        active_item_prefix: style(">>".to_owned()).white().bold(),
-        active_item_style: Style::new().bg(Color::Green).fg(Color::White),
+        active_item_prefix: style(">>".to_owned()).green().bold(),
+        active_item_style: Style::new().bg(Color::White).fg(Color::Black),
         ..Default::default()
     })
-    .item("note")
-    .item("used")
+    .item("Note")
+    .item("Used")
     .with_prompt("Select which attribute of metadata to edit")
     .default(0)
     .clear(true)
@@ -473,20 +473,19 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
 
     match choice {
         0 => {
-            let edit: String = dialoguer::Input::with_theme(&ColorfulTheme {
-                ..Default::default()
-            })
-            .with_initial_text(entry.meta().note.as_ref().unwrap_or(&"".to_owned()))
-            .with_prompt(match entry {
-                Entry::File(f) => {
-                    format!("File {}", style(&f.meta.name).green())
-                }
-                Entry::Dir(d) => {
-                    format!("Directory {}", style(&d.meta.name).blue())
-                }
-            })
-            .allow_empty(true)
-            .interact_text()?;
+            let prompt = match entry {
+                Entry::Dir(d) => format!("Directory {}: ", style(&d.meta.name).blue()),
+                Entry::File(f) => format!("File: {}", style(&f.meta.name).green()),
+            };
+
+            let edit = rustyline::Editor::<()>::new()
+                .readline_with_initial(prompt.as_str(), (entry.meta().note.as_ref().map(|s| s.as_str()).unwrap_or(""), ""));
+
+            let edit = match edit {
+                Err(rustyline::error::ReadlineError::Io(io)) => return Err(BarErr::Io(io)),
+                Err(_) => std::process::exit(0),
+                Ok(e) => e
+            };
 
             entry.meta_mut().note = match edit.is_empty() {
                 true => None,
@@ -518,11 +517,11 @@ fn search(args: &ArgMatches) -> BarResult<()> {
     let (dir, name) = match args.value_of("search-dir") {
         Some(dir) => {
             match ar.dir(dir) {
-                Some(d) => (d, dir),
+                Some(d) => (d, dir.to_owned()),
                 None => return Err(BarErr::NoEntry(dir.to_owned()))
             }
         },
-        None => (ar.root(), "/"),
+        None => (ar.root(), path::MAIN_SEPARATOR.to_string()),
     };
 
     /// Search metadata name and note for a query string and return the largest score

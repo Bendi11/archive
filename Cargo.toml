@@ -11,6 +11,7 @@ name = "bar"
 thiserror = "1.0" # For easier errors
 
 sublime_fuzzy = "0.7.0" # For searching the archive for files and giving hints for unknown files
+rustyline = "8.2"
 
 indicatif = "0.16.2" # For progress bar display in benchmarks and tests
 console = "0.14" # For console formatting in terminal applications
