@@ -107,16 +107,17 @@ impl File {
         off: &mut u64,
         writer: &mut W,
         reader: &mut R,
-        prog: &ProgressBar
+        prog: &ProgressBar,
     ) -> std::io::Result<Entry> {
         prog.set_message(format!("Saving file {}", self.meta.name));
 
         let this_prog = match prog.is_hidden() {
-            true => ProgressBar::new(0).with_style(indicatif::ProgressStyle::default_bar()
-                .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}")
-                .progress_chars("=>-"),
+            true => ProgressBar::new(0).with_style(
+                indicatif::ProgressStyle::default_bar()
+                    .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}")
+                    .progress_chars("=>-"),
             ),
-            false => ProgressBar::hidden()
+            false => ProgressBar::hidden(),
         };
 
         reader.seek(SeekFrom::Start(self.off))?;
@@ -126,14 +127,15 @@ impl File {
         this_prog.wrap_read(reader).read_exact(&mut buf)?;
         this_prog.reset();
 
-
         //Compress bytes if it is desired
         let bytes = match self.compression {
             CompressType(quality, CompressMethod::Deflate) => {
                 let mut encoder = DeflateEncoder::new(Vec::new(), quality);
 
-                this_prog.set_message("Decompressing DEFLATE compressed data");
-                this_prog.wrap_write(&mut encoder).write_all(buf.as_slice())?;
+                this_prog.set_message("Compressing data with DEFLATE");
+                this_prog
+                    .wrap_write(&mut encoder)
+                    .write_all(buf.as_slice())?;
                 this_prog.reset();
                 drop(buf);
 
@@ -141,9 +143,11 @@ impl File {
             }
             CompressType(quality, CompressMethod::Gzip) => {
                 let mut encoder = GzEncoder::new(Vec::new(), quality);
-                
-                this_prog.set_message("Decompressing gzip compressed data");
-                this_prog.wrap_write(&mut encoder).write_all(buf.as_slice())?;
+
+                this_prog.set_message("Compressing data with gzip");
+                this_prog
+                    .wrap_write(&mut encoder)
+                    .write_all(buf.as_slice())?;
                 this_prog.reset();
 
                 drop(buf);
@@ -159,7 +163,7 @@ impl File {
             compression: self.compression,
         });
 
-        this_prog.set_message("Writing decompressed bytes");
+        this_prog.set_message("Writing compressed bytes");
         std::io::copy(&mut bytes.as_slice(), &mut this_prog.wrap_write(writer))?; //Copy file data to the writer
         this_prog.finish_and_clear();
 
@@ -193,7 +197,7 @@ impl Dir {
         off: &mut u64,
         writer: &mut W,
         reader: &mut R,
-        prog: &ProgressBar
+        prog: &ProgressBar,
     ) -> std::io::Result<Entry> {
         Ok(Entry::Dir(Self {
             meta: self.meta.clone(),
@@ -297,7 +301,7 @@ impl Entry {
         off: &mut u64,
         writer: &mut W,
         reader: &mut R,
-        prog: &ProgressBar
+        prog: &ProgressBar,
     ) -> std::io::Result<Entry> {
         match self {
             Self::Dir(dir) => dir.write_data(off, writer, reader, prog),

@@ -6,8 +6,11 @@ use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use console::{style, Color, Style};
 use dialoguer::theme::ColorfulTheme;
 use indicatif::HumanBytes;
+use std::{
+    fs,
+    path::{self, Path},
+};
 use sublime_fuzzy::best_match;
-use std::{fs, path::{self, Path}};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
 /// value
@@ -186,43 +189,49 @@ fn search_subcommand() -> App<'static, 'static> {
         .visible_alias("fuzzy")
         .about("Fuzzy search for a file or directory within the archive")
         .arg(input_archive_arg(1))
-        .arg(Arg::with_name("query")
-            .short("q")
-            .long("query")
-            .index(2)
-            .required(true)
-            .multiple(false)
-            .help("Query string to fuzzy search with")
+        .arg(
+            Arg::with_name("query")
+                .short("q")
+                .long("query")
+                .index(2)
+                .required(true)
+                .multiple(false)
+                .help("Query string to fuzzy search with"),
         )
-        .arg(Arg::with_name("max-results")
-            .short("m")
-            .long("max-results")
-            .help("Adjust the maximum number of results shown per search")
-            .default_value("3")
-            .validator(|s| match s.parse::<u32>() {
-                Ok(_) => Ok(()),
-                Err(_) => Err(format!("The maximum number of results value must be a number"))
-            })
-            .multiple(false)
-            .takes_value(true)
+        .arg(
+            Arg::with_name("max-results")
+                .short("m")
+                .long("max-results")
+                .help("Adjust the maximum number of results shown per search")
+                .default_value("3")
+                .validator(|s| match s.parse::<u32>() {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        Err("The maximum number of results value must be a number".to_owned())
+                    }
+                })
+                .multiple(false)
+                .takes_value(true),
         )
-        .arg(Arg::with_name("search-dir")
-            .help("A directory in the archive to search from")
-            .takes_value(true)
-            .multiple(false)
-            .short("d")
-            .long("search-dir")
+        .arg(
+            Arg::with_name("search-dir")
+                .help("A directory in the archive to search from")
+                .takes_value(true)
+                .multiple(false)
+                .short("d")
+                .long("search-dir"),
         )
-        .arg(Arg::with_name("min-score")
-            .help("Select the minimum score for an entry to be included")
-            .long("min")
-            .takes_value(true)
-            .validator(|s| match s.parse::<isize>() {
-                Ok(_) => Ok(()),
-                Err(_) => Err(format!("The minimum score value must be a number"))
-            })
-            .multiple(false)
-            .default_value("0")
+        .arg(
+            Arg::with_name("min-score")
+                .help("Select the minimum score for an entry to be included")
+                .long("min")
+                .takes_value(true)
+                .validator(|s| match s.parse::<isize>() {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err("The minimum score value must be a number".to_owned()),
+                })
+                .multiple(false)
+                .default_value("0"),
         )
 }
 
@@ -230,7 +239,11 @@ fn search_subcommand() -> App<'static, 'static> {
 fn print_entry(entry: &Entry) {
     let meta = match entry {
         Entry::File(file) => {
-            println!("{}{}", style("File: ").white(), style(&file.meta.name).bold().green());
+            println!(
+                "{}{}",
+                style("File: ").white(),
+                style(&file.meta.name).bold().green()
+            );
             println!(
                 "{}",
                 style(format!(
@@ -252,7 +265,10 @@ fn print_entry(entry: &Entry) {
         }
     };
     if let Some(ref last_update) = meta.last_update {
-        println!("Last updated on {}", last_update.naive_local().format("%v at %r"))
+        println!(
+            "Last updated on {}",
+            last_update.naive_local().format("%v at %r")
+        )
     }
     if let Some(ref note) = meta.note {
         println!("{}{}", style("Note: ").bold(), note);
@@ -478,13 +494,15 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
                 Entry::File(f) => format!("File: {} note: ", f.meta.name),
             };
 
-            let edit = rustyline::Editor::<()>::new()
-                .readline_with_initial(prompt.as_str(), (entry.meta().note.as_ref().map(|s| s.as_str()).unwrap_or(""), ""));
+            let edit = rustyline::Editor::<()>::new().readline_with_initial(
+                prompt.as_str(),
+                (entry.meta().note.as_deref().unwrap_or(""), ""),
+            );
 
             let edit = match edit {
                 Err(rustyline::error::ReadlineError::Io(io)) => return Err(BarErr::Io(io)),
                 Err(_) => std::process::exit(0),
-                Ok(e) => e
+                Ok(e) => e,
             };
 
             entry.meta_mut().note = match edit.is_empty() {
@@ -515,11 +533,9 @@ fn search(args: &ArgMatches) -> BarResult<()> {
     let min: isize = args.value_of("min-score").unwrap().parse().unwrap();
 
     let (dir, name) = match args.value_of("search-dir") {
-        Some(dir) => {
-            match ar.dir(dir) {
-                Some(d) => (d, dir.to_owned()),
-                None => return Err(BarErr::NoEntry(dir.to_owned()))
-            }
+        Some(dir) => match ar.dir(dir) {
+            Some(d) => (d, dir.to_owned()),
+            None => return Err(BarErr::NoEntry(dir.to_owned())),
         },
         None => (ar.root(), path::MAIN_SEPARATOR.to_string()),
     };
@@ -528,42 +544,56 @@ fn search(args: &ArgMatches) -> BarResult<()> {
     fn search_meta(meta: &entry::Meta, query: &str) -> isize {
         let score = match best_match(query, meta.name.as_str()) {
             Some(score) => score.score(),
-            None => isize::MIN 
+            None => isize::MIN,
         };
 
         match meta.note {
             Some(ref note) => {
-                let note_score = best_match(query, note.as_str()).map(|s| s.score()).unwrap_or(isize::MIN);
+                let note_score = best_match(query, note.as_str())
+                    .map(|s| s.score())
+                    .unwrap_or(isize::MIN);
                 match note_score > score {
                     true => note_score,
-                    false => score
+                    false => score,
                 }
             }
-            None => score
+            None => score,
         }
     }
 
-    fn search_dir<'a>(dir: &'a entry::Dir, scores: &mut Vec<(&'a entry::Entry, isize, path::PathBuf)>, query: &str, max_len: usize, min: isize, path: path::PathBuf) {
+    fn search_dir<'a>(
+        dir: &'a entry::Dir,
+        scores: &mut Vec<(&'a entry::Entry, isize, path::PathBuf)>,
+        query: &str,
+        max_len: usize,
+        min: isize,
+        path: path::PathBuf,
+    ) {
         for entry in dir.entries() {
             let score = match entry {
                 Entry::Dir(d) => {
                     search_dir(d, scores, query, max_len, min, path.join(&d.meta.name));
                     search_meta(&d.meta, query)
                 }
-                Entry::File(f) => {
-                    search_meta(&f.meta, query)
-                }
+                Entry::File(f) => search_meta(&f.meta, query),
             };
             if score >= min {
                 scores.push((entry, score, path.join(&entry.meta().name)));
-            } 
+            }
         }
         scores.sort_by(|(_, item, _), (_, next, _)| item.cmp(next).reverse());
         scores.truncate(max_len);
     }
 
     let mut scores = Vec::with_capacity(max_results as usize);
-    search_dir(dir, &mut scores, query, max_results as usize, min, path::PathBuf::from(name));
+    search_dir(
+        dir,
+        &mut scores,
+        query,
+        max_results as usize,
+        min,
+        path::PathBuf::from(name),
+    );
     let cols = console::Term::stdout().size().1;
 
     for (entry, score, path) in scores {
