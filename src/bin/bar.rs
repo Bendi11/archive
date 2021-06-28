@@ -474,8 +474,8 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
     match choice {
         0 => {
             let prompt = match entry {
-                Entry::Dir(d) => format!("Directory {}: ", style(&d.meta.name).blue()),
-                Entry::File(f) => format!("File: {}", style(&f.meta.name).green()),
+                Entry::Dir(d) => format!("Directory {} note: ", d.meta.name),
+                Entry::File(f) => format!("File: {} note: ", f.meta.name),
             };
 
             let edit = rustyline::Editor::<()>::new()
