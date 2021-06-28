@@ -138,6 +138,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
                 .with_style(ProgressStyle::default_spinner().tick_chars(".,'`*@*`',")),
             false => ProgressBar::hidden(),
         };
+        prog.enable_steady_tick(33);
 
         self.data.seek(SeekFrom::Start(0))?;
         let mut data_size = 0u64;
