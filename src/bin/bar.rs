@@ -307,19 +307,23 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
 
 /// Show a directory tree with metadata
 fn tree(args: &ArgMatches) -> BarResult<()> {
-    fn print_tabs(num: u16) {
-        (0..num).for_each(|_| print!("    "));
-        println!("|");
-        (0..num).for_each(|_| print!("    "));
-        print!("+ ");
+    fn print_tabs(num: u16, dir: bool) {
+        (0..num).for_each(|_| print!("    |"));
+        //println!("|");
+        println!();
+        (0..num).for_each(|_| print!("    |"));
+        match dir {
+            true => print!("---- "),
+            false => print!("- "),
+        }
     }
     fn walk_dir(dir: &entry::Dir, nested: u16) {
-        print_tabs(nested);
+        print_tabs(nested, true);
         println!("{}", style(&dir.meta.name).bold().blue());
         for entry in dir.entries() {
             match entry {
                 entry::Entry::File(file) => {
-                    print_tabs(nested + 1);
+                    print_tabs(nested + 1, false);
                     println!("{}", style(&file.meta.name).green());
                 }
                 entry::Entry::Dir(d) => {
@@ -341,10 +345,11 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
     for entry in dir.entries() {
         match entry {
             entry::Entry::File(file) => {
+                print_tabs(1, false);
                 println!("{}", style(&file.meta.name).green());
             }
             entry::Entry::Dir(d) => {
-                walk_dir(d, 0);
+                walk_dir(d, 1);
             }
         }
     }
