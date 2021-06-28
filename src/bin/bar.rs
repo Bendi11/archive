@@ -1,6 +1,7 @@
 use bar::ar::{Bar, BarErr, BarResult, entry::{self, Entry}};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
-use console::style;
+use console::{Color, Style, style};
+use dialoguer::theme::ColorfulTheme;
 use std::{fs, path::Path};
 
 /// An argument with the name "input-file" that validates that its argument exists and only takes one
@@ -237,11 +238,11 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
     for arg in args.values_of("entry-paths").unwrap() {
         let meta = match (bar.file(arg), bar.dir(arg)) {
             (Some(file), _) => {
-                println!("{}", style(format!("File {}", arg)).bold());
+                println!("{}{}", style("File: ").white(), style(arg).bold().green());
                 &file.meta
             },
             (_, Some(dir)) => {
-                println!("{}", style(format!("Directory {}", arg)).bold());
+                println!("{}{}", style("Directory: ").white(), style(arg).bold().blue());
                 &dir.meta
             },
             (_, _) => {
@@ -256,8 +257,8 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
             println!("{}{}", style("Note: ").bold(), note);
         }
         println!("{}", match meta.used {
-            true => "This file has been used",
-            false => "This file has not been used"
+            true => style("This file has been used").white(),
+            false => style("This file has not been used").color256(7),
         });
         println!("{}", style("\n==========\n").white().bold());
 
@@ -327,7 +328,11 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
         None => return Err(BarErr::NoEntry(args.value_of("entry").unwrap().to_owned())),
     };
 
-    let choice = dialoguer::Select::new()
+    let choice = dialoguer::Select::with_theme(&ColorfulTheme {
+        active_item_prefix: style(">>".to_owned()).white().bold(),
+        active_item_style: Style::new().bg(Color::Green).fg(Color::White),
+        ..Default::default()
+    })
         .item("note")
         .item("used")
         .with_prompt("Select which attribute of metadata to edit")
@@ -337,23 +342,25 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
 
     match choice {
         0 => {
-            let edit: String = dialoguer::Input::new()
-            .with_initial_text(entry.meta().note.as_ref().unwrap_or(&"".to_owned()))
-            .with_prompt(match entry {
-                Entry::File(f) => {
-                    format!("File {}", style(&f.meta.name).green())
-                },
-                Entry::Dir(d) => {
-                    format!("Directory {}", style(&d.meta.name).blue())
-                }
+            let edit: String = dialoguer::Input::with_theme(&ColorfulTheme {
+                ..Default::default()
             })
-            .allow_empty(true)
-            .interact_text()?;
+                .with_initial_text(entry.meta().note.as_ref().unwrap_or(&"".to_owned()))
+                .with_prompt(match entry {
+                    Entry::File(f) => {
+                        format!("File {}", style(&f.meta.name).green())
+                    },
+                    Entry::Dir(d) => {
+                        format!("Directory {}", style(&d.meta.name).blue())
+                    }
+                })
+                .allow_empty(true)
+                .interact_text()?;
 
-        entry.meta_mut().note = match edit.is_empty() {
-            true => None,
-            false => Some(edit)
-        };
+            entry.meta_mut().note = match edit.is_empty() {
+                true => None,
+                false => Some(edit)
+            };
         },
         1 => {
             let choice = dialoguer::Confirm::new()
