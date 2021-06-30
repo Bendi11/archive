@@ -7,6 +7,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use indicatif::{ProgressBar, ProgressStyle};
 
 use entry::{CompressType, Entry, Meta};
+use std::cell::RefCell;
 use std::io::{self, Seek, SeekFrom, Write};
 
 impl<S: io::Read + io::Write + io::Seek> Bar<S> {
@@ -41,10 +42,10 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
             header: Header {
                 meta: root_meta,
                 root: entry::Dir {
-                    meta: Meta {
+                    meta: RefCell::new(Meta {
                         name: "root".to_owned(),
                         ..Default::default()
-                    },
+                    }),
                     data: Self::pack_read_dir(
                         dir,
                         &mut off,
@@ -76,6 +77,12 @@ impl<S: io::Read + io::Seek> Bar<S> {
     #[inline]
     pub fn entry_mut(&mut self, path: impl AsRef<std::path::Path>) -> Option<&mut Entry> {
         self.header.root.entry_mut(path)
+    }
+
+    /// Get a mutable reference to the root directory
+    #[inline]
+    pub fn root_mut(&mut self) -> &mut entry::Dir {
+        &mut self.header.root
     }
 
     /// Get an entry and ensure that is a [File](entry::File), returning `None` if either
@@ -182,18 +189,25 @@ impl<S: io::Read + io::Seek> Bar<S> {
         self.header.root.entries()
     }
 
+    /// Return a mutable iterator over all entries in the archive
+    #[inline]
+    pub fn entries_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut Entry> {
+        self.header.root.entries_mut()
+    }
+
     /// Write file data to a writer if the file exists, optionally decompressing the file's data
     pub fn file_data(
         &mut self,
-        path: impl AsRef<std::path::Path>,
+        file: entry::File,
+        //path: impl AsRef<std::path::Path>,
         w: &mut impl io::Write,
         decompress: bool,
         prog: bool,
     ) -> BarResult<()> {
-        let file = self
-            .file(path.as_ref())
-            .ok_or_else(|| BarErr::NoEntry(path.as_ref().to_str().unwrap().to_owned()))?
-            .clone();
+        //let file = self
+        //.file(path.as_ref())
+        //.ok_or_else(|| BarErr::NoEntry(path.as_ref().to_str().unwrap().to_owned()))?
+        //.clone();
         Self::save_file(&file, w, &mut self.data, decompress, prog)
     }
 }

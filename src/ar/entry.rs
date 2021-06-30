@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use flate2::write::{DeflateEncoder, GzEncoder};
 use indicatif::ProgressBar;
 use std::{
+    cell::RefCell,
     collections::HashMap,
     io::{Read, Seek, SeekFrom, Write},
     path,
@@ -89,7 +90,7 @@ pub struct Meta {
 #[derive(Debug, Clone)]
 pub struct File {
     /// The metadata of this file entry
-    pub meta: Meta,
+    pub meta: RefCell<Meta>,
 
     /// The compression method of this file
     pub(crate) compression: CompressType,
@@ -109,7 +110,7 @@ impl File {
         reader: &mut R,
         prog: &ProgressBar,
     ) -> std::io::Result<Entry> {
-        prog.set_message(format!("Saving file {}", self.meta.name));
+        prog.set_message(format!("Saving file {}", self.meta.borrow().name));
 
         let this_prog = match prog.is_hidden() {
             true => ProgressBar::new(0).with_style(
@@ -185,7 +186,7 @@ impl File {
 #[derive(Debug, Default, Clone)]
 pub struct Dir {
     /// Metadata of this directory
-    pub meta: Meta,
+    pub meta: RefCell<Meta>,
 
     /// The contained data of this `Dir`
     pub(crate) data: HashMap<String, Entry>,
@@ -262,6 +263,12 @@ impl Dir {
     #[inline]
     pub fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.data.iter().map(|(_, entry)| entry)
+    }
+
+    /// Get a mutable iterator over the contained entries
+    #[inline]
+    pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut Entry> {
+        self.data.iter_mut().map(|(_, entry)| entry)
     }
 }
 
@@ -341,24 +348,24 @@ impl Entry {
     #[inline(always)]
     pub fn name(&self) -> String {
         match self {
-            Self::Dir(dir) => dir.meta.name.clone(),
-            Self::File(file) => file.meta.name.clone(),
+            Self::Dir(dir) => dir.meta.borrow().name.clone(),
+            Self::File(file) => file.meta.borrow().name.clone(),
         }
     }
 
     /// Get the metadata of this entry
-    pub const fn meta(&self) -> &Meta {
+    pub fn meta(&self) -> std::cell::Ref<Meta> {
         match self {
-            Self::Dir(ref dir) => &dir.meta,
-            Self::File(ref file) => &file.meta,
+            Self::Dir(ref dir) => dir.meta.borrow(),
+            Self::File(ref file) => file.meta.borrow(),
         }
     }
 
     /// Get a mutable reference to this entry's metadata
-    pub fn meta_mut(&mut self) -> &mut Meta {
+    pub fn meta_mut(&self) -> std::cell::RefMut<Meta> {
         match self {
-            Self::File(f) => &mut f.meta,
-            Self::Dir(d) => &mut d.meta,
+            Self::File(f) => f.meta.borrow_mut(),
+            Self::Dir(d) => d.meta.borrow_mut(),
         }
     }
 
@@ -411,10 +418,10 @@ mod tests {
         root.data.insert(
             "test".into(),
             Entry::Dir(Dir {
-                meta: Meta {
+                meta: RefCell::new(Meta {
                     name: "test".into(),
                     ..Default::default()
-                },
+                }),
                 ..Default::default()
             }),
         );
@@ -423,10 +430,10 @@ mod tests {
             Entry::Dir(dir) => dir.data.insert(
                 "test.txt".into(),
                 Entry::File(File {
-                    meta: Meta {
+                    meta: RefCell::new(Meta {
                         name: "test.txt".into(),
                         ..Default::default()
-                    },
+                    }),
                     compression: "none".parse().unwrap(),
                     off: 0,
                     size: 0,

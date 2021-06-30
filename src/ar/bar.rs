@@ -10,6 +10,7 @@ use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rmpv::Value;
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fmt,
     io::{self, Read, Seek, SeekFrom, Write},
@@ -122,7 +123,7 @@ pub(super) fn ser_entry(entry: &Entry) -> Value {
 
 pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
     Value::Array(vec![
-        ser_meta(&dir.meta),
+        ser_meta(&dir.meta.borrow()),
         Value::Array(
             dir.data
                 .iter()
@@ -148,7 +149,10 @@ pub(super) fn ser_fileentry(file: &entry::File) -> Value {
             Value::Integer(Integer::from(SIZE)),
             Value::Integer(Integer::from(file.size)),
         ),
-        (Value::Integer(Integer::from(META)), ser_meta(&file.meta)),
+        (
+            Value::Integer(Integer::from(META)),
+            ser_meta(&file.meta.borrow()),
+        ),
         (
             Value::Integer(Integer::from(COMPRESSMETHOD)),
             Value::String(Utf8String::from(file.compression.to_string())),
@@ -169,10 +173,10 @@ impl Bar<io::Cursor<Vec<u8>>> {
                     ..Default::default()
                 },
                 root: entry::Dir {
-                    meta: Meta {
+                    meta: RefCell::new(Meta {
                         name: "root".to_owned(),
                         ..Default::default()
-                    },
+                    }),
                     data: HashMap::new(),
                 },
             },
@@ -194,13 +198,13 @@ impl<S: Read + Seek> Bar<S> {
                     Entry::Dir(dir) => {
                         vec.push((
                             Value::String(Utf8String::from(path.join(name).to_str().unwrap())),
-                            ser_meta(&dir.meta),
+                            ser_meta(&dir.meta.borrow()),
                         ));
                         walk_dir(vec, dir, path.join(name));
                     }
                     Entry::File(file) => vec.push((
                         Value::String(Utf8String::from(path.join(name).to_str().unwrap())),
-                        ser_meta(&file.meta),
+                        ser_meta(&file.meta.borrow()),
                     )),
                 }
             }
@@ -272,7 +276,7 @@ impl<S: Read + Seek> Bar<S> {
             match file.metadata().unwrap().is_dir() {
                 true => {
                     let directory = entry::Dir {
-                        meta,
+                        meta: RefCell::new(meta),
                         data: Self::pack_read_dir(
                             &file.path(),
                             off,
@@ -306,7 +310,7 @@ impl<S: Read + Seek> Bar<S> {
                         compression: compress,
                         off: *off,
                         size: size as u32,
-                        meta,
+                        meta: RefCell::new(meta),
                     };
                     *off += size;
                     std::io::copy(&mut read_prog.wrap_read(&mut data), writer)?;
@@ -373,7 +377,7 @@ impl<S: Read + Seek> Bar<S> {
                 .ok_or_else(|| {
                     BarErr::InvalidHeaderFormat("SIZE field in FILE entry is not a u64".into())
                 })? as u32,
-            meta,
+            meta: RefCell::new(meta),
             compression,
         })
     }
@@ -401,7 +405,7 @@ impl<S: Read + Seek> Bar<S> {
                         .into_iter()
                         .map(|entry| (entry.name(), entry))
                         .collect(),
-                    meta,
+                    meta: RefCell::new(meta),
                 })
             }
             _ => Err(BarErr::InvalidHeaderFormat(format!(
@@ -578,7 +582,7 @@ impl<S: Read + Seek> Bar<S> {
         prog.wrap_read(back).read_exact(&mut data)?;
         prog.reset();
 
-        prog.set_message(format!("Saving file {}", file.meta.name));
+        prog.set_message(format!("Saving file {}", file.meta.borrow().name));
 
         let bytes = match decompress {
             true => match file.compression {
@@ -624,7 +628,7 @@ impl<S: Read + Seek> Bar<S> {
                     false => ProgressBar::hidden(),
                 };
 
-                dirprog.set_message(format!("Saving directory {}", dir.meta.name));
+                dirprog.set_message(format!("Saving directory {}", dir.meta.borrow().name));
                 std::fs::create_dir_all(path.clone())?;
                 for (_, file) in dir.data.iter() {
                     Self::save_entry(path.as_ref(), file, back, prog)?;
@@ -656,7 +660,8 @@ mod tests {
         drop(file);
         let mut reader = Bar::unpack("./archive.bar").unwrap();
         let file = reader.file_mut("subdir/test.txt").unwrap();
-        file.meta.note = Some("This is a testing note about the file test.txt testing".into());
+        file.meta.borrow_mut().note =
+            Some("This is a testing note about the file test.txt testing".into());
         drop(file);
 
         reader.save_unpacked("output", false).unwrap();
