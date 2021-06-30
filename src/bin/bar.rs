@@ -413,7 +413,7 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
                     walk_dir(d, 1);
                 } else {
                     print_tabs(1, false);
-                    println!("{}", style(&dir.meta.borrow().name).blue());
+                    println!("{}", style(&d.meta.borrow().name).blue());
                 }
             }
         }
