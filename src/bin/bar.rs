@@ -110,10 +110,17 @@ fn tree_subcommand() -> App<'static, 'static> {
         .arg(input_archive_arg())
         .arg(
             Arg::with_name("dir")
-                .short("d")
                 .help("Select the directory to view a directory tree of")
                 .multiple(false)
+                .allow_hyphen_values(true)
                 .takes_value(true),
+        )
+        .arg(Arg::with_name("recursive")
+            .help("If enabled, subdirectories will be searched recursively")
+            .takes_value(false)
+            .short("r")
+            .long("recursive")
+            .multiple(false)
         )
 }
 
@@ -402,7 +409,12 @@ fn tree(args: &ArgMatches) -> BarResult<()> {
                 println!("{}", style(&file.meta.borrow().name).green());
             }
             entry::Entry::Dir(d) => {
-                walk_dir(d, 1);
+                if args.is_present("recursive") {
+                    walk_dir(d, 1);
+                } else {
+                    print_tabs(1, false);
+                    println!("{}", style(&dir.meta.borrow().name).blue());
+                }
             }
         }
     }
