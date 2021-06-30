@@ -505,7 +505,7 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
             let edit = loop {
                 let prompt = match entry {
                     Entry::Dir(d) => format!("Directory {} name: ", d.meta.borrow().name),
-                    Entry::File(f) => format!("File: {} name: ", f.meta.borrow().name),
+                    Entry::File(f) => format!("File {} name: ", f.meta.borrow().name),
                 };
 
                 let edit = rustyline::Editor::<()>::new()
@@ -540,6 +540,9 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
                             false => continue,
                         }
                     }
+                }
+                else {
+                    break edit
                 }
             };
 
