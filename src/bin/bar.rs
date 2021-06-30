@@ -178,8 +178,7 @@ fn search_subcommand() -> App<'static, 'static> {
         .arg(input_archive_arg())
         .arg(
             Arg::with_name("query")
-                .short("q")
-                .long("query")
+                .allow_hyphen_values(true)
                 .required(true)
                 .multiple(false)
                 .help("Query string to fuzzy search with"),
@@ -275,7 +274,7 @@ fn main() {
         .about("A utility to pack, unpack, and manipulate .bar archives")
         .author("Bendi11")
         .version(crate_version!())
-        .setting(AppSettings::WaitOnError)
+        //.setting(AppSettings::WaitOnError)
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .arg(
             Arg::with_name("no-prog")
