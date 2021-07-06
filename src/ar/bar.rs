@@ -238,24 +238,43 @@ impl<S: Read + Seek> Bar<S> {
             Value::String(Utf8String::from("/")),
             ser_meta(&self.header.meta),
         ));
-        Value::Map(vec)
+
+        Value::Array(vec![
+            Value::Binary(self.header.nonce.to_vec()),
+            Value::Map(vec)
+        ])
     }
 
     /// Read all entry metadata from a root file when packing a previously unpacked directory
     pub(super) fn read_all_entry_metadata(
         file: impl AsRef<std::path::Path>,
-    ) -> BarResult<HashMap<String, Meta>> {
+    ) -> BarResult<(Nonce, HashMap<String, Meta>)> {
         let mut data = match std::fs::File::open(file.as_ref()) {
             Ok(data) => data,
             Err(_) => {
-                return Ok(HashMap::new());
+                return Ok((Nonce::clone_from_slice(&[0u8 ; 12]), HashMap::new()));
             }
         };
         let val = rmpv::decode::read_value(&mut data)?;
-        let val = val.as_map().ok_or_else(|| {
-            BarErr::BadMetadataFile("Entry metadata file's main content is not a map".into())
+
+        let val = val.as_array().ok_or_else(|| {
+            BarErr::BadMetadataFile("Entry metadata file's main content is not an array".into())
         })?;
-        val.iter()
+
+        let nonce = val.get(0).ok_or_else(|| {
+            BarErr::BadMetadataFile("Entry's metadata file header array is not long enough".into())
+        })?.as_slice().ok_or_else(|| {
+            BarErr::BadMetadataFile("Nonce of header file is not a byte slice".into())
+        })?;
+        let nonce = Nonce::clone_from_slice(nonce);
+
+        let val = val.get(1).ok_or_else(|| {
+            BarErr::BadMetadataFile("Header array is not long enough".into())
+        })?.as_map().ok_or_else(|| {
+            BarErr::BadMetadataFile("Header map of paths to metadata is not a map".into())
+        })?;
+
+        let map = val.iter()
             .map(|(path, meta)| -> BarResult<_> {
                 let path = path.as_str().ok_or_else(|| {
                     BarErr::BadMetadataFile("The keys for metada's map are not strings".into())
@@ -263,7 +282,9 @@ impl<S: Read + Seek> Bar<S> {
                 let meta = Self::read_meta(meta)?; //Read the metadata
                 Ok((path.to_owned().replace("\\", "/"), meta))
             })
-            .collect::<BarResult<HashMap<String, Meta>>>()
+            .collect::<BarResult<HashMap<String, Meta>>>()?;
+            
+        Ok((nonce, map))
     }
 
     /// Read all files in a directory into a list of [Entry]s, reading metadata files if possible

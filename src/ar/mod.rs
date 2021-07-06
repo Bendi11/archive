@@ -28,7 +28,7 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
         let dir = dir.as_ref();
         let mut off = 0u64; //The current offset into the backing storage
 
-        let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
+        let (nonce, meta) = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
         let root_meta = if let Some(meta) = meta.get("/") {
             meta.clone()
         } else {
@@ -41,6 +41,7 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
         Ok(Self {
             header: Header {
                 meta: root_meta,
+                nonce,
                 root: entry::Dir {
                     meta: RefCell::new(Meta {
                         name: "root".to_owned(),
