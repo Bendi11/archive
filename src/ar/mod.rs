@@ -65,6 +65,11 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
 }
 
 impl<S: io::Read + io::Seek> Bar<S> {
+    /// Get the metadata of this bar archive
+    pub fn meta(&self) -> &Meta {
+        &self.header.meta
+    }
+
     /// Get a reference to an entry in the Bar archive. This should
     /// NOT contain a root symbol like '/' on linux or
     /// 'C:\\' on windows

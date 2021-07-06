@@ -2,6 +2,7 @@
 //!
 
 use super::entry;
+use chacha20poly1305::Nonce;
 use super::entry::Entry;
 use byteorder::{LittleEndian, ReadBytesExt};
 use flate2::read::{DeflateDecoder, GzDecoder};
@@ -143,7 +144,7 @@ pub(super) fn ser_header(header: &Header) -> Value {
 /// Create a file value from a `File` entry
 pub(super) fn ser_fileentry(file: &entry::File) -> Value {
     use rmpv::{Integer, Utf8String};
-    Value::Map(vec![
+    let mut map = vec![
         (
             Value::Integer(Integer::from(OFFSET)),
             Value::Integer(Integer::from(file.off)),
@@ -160,7 +161,22 @@ pub(super) fn ser_fileentry(file: &entry::File) -> Value {
             Value::Integer(Integer::from(COMPRESSMETHOD)),
             Value::String(Utf8String::from(file.compression.to_string())),
         ),
-    ])
+
+    ];
+    if file.is_encrypted() {
+        let nonce = match file.enc {
+            entry::EncryptType::ChaCha20(nonce) => nonce,
+            _ => unreachable!()
+        };
+        map.push(
+            (
+                Value::Integer(Integer::from(ENCRYPTION)),
+                Value::Binary(nonce.to_vec())
+            )
+        )
+    }
+
+    Value::Map(map)
 }
 
 impl Bar<io::Cursor<Vec<u8>>> {
@@ -382,11 +398,11 @@ impl<S: Read + Seek> Bar<S> {
                 })? as u32,
             meta: RefCell::new(meta),
             enc: match val.get(&(ENCRYPTION as u64)) {
-                Some(nonce) => entry::EncryptType::ChaCha20(nonce.as_u64().ok_or_else(|| {
+                Some(nonce) => entry::EncryptType::ChaCha20(Nonce::clone_from_slice(nonce.as_slice().ok_or_else(|| {
                     BarErr::InvalidHeaderFormat(
-                        "ENC field in FILE entry is present but is not a u64".into(),
+                        "ENC field in FILE entry is present but is not an array".into(),
                     )
-                })?),
+                })?)),
                 None => entry::EncryptType::None,
             },
             compression,

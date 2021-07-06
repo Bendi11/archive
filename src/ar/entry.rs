@@ -1,3 +1,4 @@
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, aead::{AeadInPlace, NewAead}};
 use flate2::write::{DeflateEncoder, GzEncoder};
 use indicatif::ProgressBar;
 use std::{
@@ -6,6 +7,8 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     path,
 };
+
+use super::BarResult;
 
 /// The `CompressMethod` represents all ways that a [File]'s data can be compressed in the archive
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,7 +90,7 @@ pub struct Meta {
 #[derive(Clone, Debug)]
 pub enum EncryptType {
     /// ChaCha20 with nonce bytes
-    ChaCha20(u64),
+    ChaCha20(Nonce),
 
     /// No encryption
     None,
@@ -119,6 +122,10 @@ pub struct File {
 }
 
 impl File {
+    pub const fn compression(&self) -> &CompressType {
+        &self.compression
+    }
+
     /// Write this `File`s data to a writer, compressing / encrypting bytes as needed
     pub fn write_data<W: Write, R: Read + Seek>(
         &self,
@@ -130,12 +137,12 @@ impl File {
         prog.set_message(format!("Saving file {}", self.meta.borrow().name));
 
         let this_prog = match prog.is_hidden() {
-            true => ProgressBar::new(0).with_style(
+            false => ProgressBar::new(0).with_style(
                 indicatif::ProgressStyle::default_bar()
-                    .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}")
+                    .template("[{bar}] {bytes} {binary_bytes_per_sec} {msg}")
                     .progress_chars("=>-"),
             ),
-            false => ProgressBar::hidden(),
+            true => ProgressBar::hidden(),
         };
 
         reader.seek(SeekFrom::Start(self.off))?;
@@ -197,6 +204,32 @@ impl File {
 
     pub const fn size(&self) -> u32 {
         self.size
+    }
+
+    /// Encrypt this file's data in place using the given key and nonce.
+    /// This is a no-op if the file is already encrypted
+    pub fn encrypt(&mut self, key: &Key, nonce: &Nonce, back: &mut (impl Write + Read + Seek)) -> BarResult<()> {
+        if self.is_encrypted() {
+            return Ok(())
+        }
+
+        self.enc = EncryptType::ChaCha20(nonce.clone());
+        let cipher = ChaCha20Poly1305::new(key);
+        back.seek(SeekFrom::Start(self.off))?;
+
+        let mut data = vec![0u8 ; self.size as usize];
+        back.read_exact(&mut data)?;
+
+        cipher.encrypt_in_place(nonce, b"", &mut data)?;
+        Ok(())
+    }
+
+    /// Check if this file's data is encrypted
+    pub const fn is_encrypted(&self) -> bool {
+        match self.enc {
+            EncryptType::ChaCha20(_) => true,
+            _ => false
+        }
     }
 }
 

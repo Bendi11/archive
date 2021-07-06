@@ -15,10 +15,10 @@ pub struct Prog<'a, T, E: fmt::Display + fmt::Debug> {
 #[derive(Error, Debug)]
 pub enum CmdErr<E: std::fmt::Display + std::fmt::Debug> {
     #[error("An error occurred when parsing arguments: {0}")]
-    ArgErr(#[from] clap::Error),
+    ArgErr(clap::Error),
 
     #[error("Error when splitting commands: {0}")]
-    MismatchedQuotes(#[from] shellwords::MismatchedQuotes),
+    MismatchedQuotes(shellwords::MismatchedQuotes),
 
     #[error("A command with no contents was encountered!")]
     EmptyCommand,
@@ -28,6 +28,12 @@ pub enum CmdErr<E: std::fmt::Display + std::fmt::Debug> {
 
     #[error("An error occurred when running commands: {0}")]
     RunErr(E),
+}
+
+impl<E: std::fmt::Display + std::fmt::Debug> From<E> for CmdErr<E> {
+    fn from(e: E) -> Self {
+        Self::RunErr(e)
+    }
 }
 
 impl<'a, T, E: fmt::Display + fmt::Debug> Prog<'a, T, E> {
@@ -44,9 +50,9 @@ impl<'a, T, E: fmt::Display + fmt::Debug> Prog<'a, T, E> {
     }
 
     /// Run this program with the given input string
-    pub fn run(&self, input: &'a str, start: T) -> Result<T, CmdErr<E>> {
+    pub fn run(&self, input: String, start: T) -> Result<T, CmdErr<E>> {
         let mut val = start;
-        let input = shellwords::split(input)?;
+        let input = shellwords::split(input.as_str()).map_err(|e| CmdErr::MismatchedQuotes(e))?;
         let input = input.split(|s| s == "|");
         for command in input {
             let name = command.get(0).ok_or(CmdErr::EmptyCommand)?;
@@ -87,7 +93,8 @@ impl<'a, T, E: fmt::Display + fmt::Debug> Cmd<'a, T, E> {
         let matches = self
             .app
             .clone()
-            .get_matches_from_safe(args.into_iter().cloned())?;
+            .get_matches_from_safe(args.into_iter().cloned())
+            .map_err(|e| CmdErr::ArgErr(e))?;
         (self.run)(val, matches, prog).map_err(|e| CmdErr::RunErr(e))
     }
 }
@@ -108,14 +115,14 @@ mod tests {
                 App::new("+").arg(Arg::with_name("val").required(true).takes_value(true)),
                 |val, args, _| Ok(val + args.value_of("val").unwrap()),
             ))
-            .with_cmd(Cmd::new(
-                App::new("print"),
-                |val, _, _| {
-                    print!("{}", val);
-                    Ok(val)
-                }
-            ));
-        let res = prog.run("echo \"testing\" | + \" hello | world!\" | print", "".to_owned());
+            .with_cmd(Cmd::new(App::new("print"), |val, _, _| {
+                print!("{}", val);
+                Ok(val)
+            }));
+        let res = prog.run(
+            "echo \"testing\" | + \" hello | world!\" | print".to_owned(),
+            "".to_owned(),
+        );
         assert_eq!(res.unwrap(), "testing hello | world!".to_owned());
     }
 }

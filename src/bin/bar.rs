@@ -251,6 +251,11 @@ fn print_entry(entry: &Entry) {
                 .italic()
             );
 
+            println!(
+                "{}",
+                style(format!("compression: {}", file.compression().to_string())).italic()
+            );
+            
             //Guess the file type from extension
             match mime_guess::from_path(&file.meta.borrow().name).first() {
                 Some(mime) => println!("mime type (from extension): {}", mime.essence_str()),
@@ -367,7 +372,7 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
     for arg in args.values_of("entry-paths").unwrap() {
         println!("{}", "=".repeat(cols as usize));
 
-        let entry = get_entry_or_search(&bar, arg);
+        let entry = get_entry_or_search(bar.root(), arg);
         print_entry(entry);
     }
 
@@ -438,7 +443,7 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
     let output = path::PathBuf::from(args.value_of("output-dir").unwrap());
 
     for item in args.values_of("extracted-files").unwrap() {
-        let item = get_entry_or_search(&ar, item);
+        let item = get_entry_or_search(ar.root(), item);
         if args.is_present("update-as-used") {
             item.meta_mut().used = true;
         }
@@ -460,8 +465,8 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
 
 /// Edit a specific entry's metadata
 fn edit(args: &ArgMatches) -> BarResult<()> {
-    let mut bar = Bar::unpack(args.value_of("input-file").unwrap())?;
-    let entry = get_entry_or_search(&mut bar, args.value_of("entry").unwrap());
+    let bar = Bar::unpack(args.value_of("input-file").unwrap())?;
+    let entry = get_entry_or_search(bar.root(), args.value_of("entry").unwrap());
 
     let choice = dialoguer::Select::with_theme(&ColorfulTheme {
         active_item_prefix: style(">>".to_owned()).green().bold(),
@@ -597,25 +602,15 @@ fn search(args: &ArgMatches) -> BarResult<()> {
 }
 
 /// Get an entry using a string name, or if the entry doesn't exist, search for it
-fn get_entry_or_search<'a, S: std::io::Read + std::io::Seek>(
-    bar: &'a Bar<S>,
-    item: &str,
-) -> &'a Entry {
-    match bar.entry(item) {
+fn get_entry_or_search<'a>(dir: &'a entry::Dir, item: &str) -> &'a Entry {
+    match dir.entry(item) {
         Some(ref mut entry) => entry,
         None => {
             let mut items: Vec<(&'a Entry, isize, path::PathBuf)> = vec![];
             let mut loaded = 3; //The number of loaded entries
 
             loop {
-                search_dir(
-                    bar.root(),
-                    &mut items,
-                    item,
-                    loaded,
-                    0,
-                    path::PathBuf::from("/"),
-                ); //Search the root directory for the query
+                search_dir(dir, &mut items, item, loaded, 0, path::PathBuf::from("/")); //Search the root directory for the query
                 let select = dialoguer::Select::with_theme(&ColorfulTheme {
                     ..Default::default()
                 })
