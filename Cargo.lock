@@ -44,6 +44,7 @@ dependencies = [
  "dialoguer",
  "flate2",
  "indicatif",
+ "oorandom",
  "rmp",
  "rmpv",
  "rustyline",
