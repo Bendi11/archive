@@ -382,7 +382,7 @@ fn crypt(args: &ArgMatches) -> BarResult<()> {
                     eprintln!("{}", style(format!("Entry {} is a directory, not a file", name)).red());
                     continue
                 },
-            }.clone();
+            };
 
         match args.value_of("one-password") {
             Some(pass) => {

@@ -82,7 +82,7 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
 
     /// Encrypt a file using the given key, if the file is already encrypted then this is a no op
     #[inline]
-    pub fn encrypt(&mut self, file: entry::File, password: &Key) -> BarResult<()> {
+    pub fn encrypt(&mut self, file: &entry::File, password: &Key) -> BarResult<()> {
         file.encrypt(password, &self.header.nonce, &mut self.data)?;
         increment_bytes(&mut self.header.nonce, 1); //Increment our nonce counter by 1
         Ok(())
@@ -90,7 +90,7 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
 
     /// Decrypt a file using the given key 
     #[inline]
-    pub fn decrypt(&mut self, file: entry::File, password: &Key) -> BarResult<()> {
+    pub fn decrypt(&mut self, file: &entry::File, password: &Key) -> BarResult<()> {
         file.decrypt(password, &mut self.data)
     }
 }
