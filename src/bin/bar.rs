@@ -520,8 +520,6 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
 
     for item in args.values_of("extracted-files").unwrap() {
         let item = get_entry_or_search(&ar, item);
-        //.as_file()
-        //.ok_or_else(|| BarErr::NoEntry(item.to_owned()))?;
         if args.is_present("update-as-used") {
             item.meta_mut().used = true;
         }

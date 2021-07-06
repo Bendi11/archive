@@ -216,14 +216,31 @@ impl<S: io::Read + io::Seek> Bar<S> {
         prog: bool,
         recurse: bool,
     ) -> BarResult<()> {
-        Self::save_entry(
-            dir.as_ref(),
-            &entry,
-            &mut self.data,
-            prog,
-            decompress,
-            recurse,
-        )
+
+        let path = dir.as_ref().join(entry.name());
+
+        match entry {
+            Entry::Dir(dir) => {
+                let dirprog = match prog {
+                    true => ProgressBar::new(dir.data.len() as u64)
+                        .with_style(ProgressStyle::default_bar().progress_chars("=>-")),
+                    false => ProgressBar::hidden(),
+                };
+
+                dirprog.set_message(format!("Saving directory {}", dir.meta.borrow().name));
+                std::fs::create_dir_all(path.clone())?;
+                for (_, file) in dir.data.iter() {
+                    Self::save_entry(path.as_ref(), file, &mut self.data, prog, decompress, recurse)?;
+                    dirprog.inc(1);
+                }
+                dirprog.finish_and_clear();
+            }
+            Entry::File(ref file) => {
+                let mut file_data = std::fs::File::create(path)?;
+                Self::save_file(file, &mut file_data, &mut self.data, decompress, prog)?;
+            }
+        }
+        Ok(())
     }
 }
 
