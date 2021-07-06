@@ -142,7 +142,7 @@ pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
 }
 
 pub(super) fn ser_header(header: &Header) -> Value {
-    Value::Array(vec![ser_meta(&header.meta), ser_direntry(&header.root)])
+    Value::Array(vec![ser_meta(&header.meta), Value::Binary(header.nonce.to_vec()), ser_direntry(&header.root)])
 }
 
 /// Create a file value from a `File` entry
@@ -568,7 +568,7 @@ impl<S: Read + Seek> Bar<S> {
                 Ok(Header { meta, root: dir, nonce: Nonce::clone_from_slice(nonce) })
             }
             _ => Err(BarErr::InvalidHeaderFormat(
-                "The top level header array does not contain two elements".into(),
+                "The top level header array does not contain three elements".into(),
             )),
         }
     }

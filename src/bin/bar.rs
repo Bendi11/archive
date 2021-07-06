@@ -385,16 +385,24 @@ fn crypt(args: &ArgMatches) -> BarResult<()> {
             }.clone();
 
         match args.value_of("one-password") {
-            Some(pass) => match args.is_present("decrypt") {
-                false => bar.encrypt(entry, Key::from_slice(pass.as_bytes())),
-                true => bar.decrypt(entry, Key::from_slice(pass.as_bytes())),
-            }
-            None => {
-                let pass = rustyline::Editor::<()>::new()
-                    .readline(&*format!("Password for file {}", name)).unwrap();
+            Some(pass) => {
+                let mut pass = pass.as_bytes().to_vec();
+                pass.extend_from_slice(&[0u8 ; 32]);
+                pass.truncate(32);
                 match args.is_present("decrypt") {
-                    false => bar.encrypt(entry, Key::from_slice(pass.as_bytes())),
-                    true => bar.decrypt(entry, Key::from_slice(pass.as_bytes())),
+                false => bar.encrypt(entry, Key::from_slice(pass.as_slice())),
+                true => bar.decrypt(entry, Key::from_slice(pass.as_slice())),
+            }
+        }
+            None => {
+                let mut pass = rustyline::Editor::<()>::new()
+                    .readline(&*format!("Password for file {}: ", name)).unwrap().as_bytes().to_vec();
+
+                pass.extend_from_slice(&[0u8 ; 32]);
+                pass.truncate(32);
+                match args.is_present("decrypt") {
+                    false => bar.encrypt(entry, Key::from_slice(pass.as_slice())),
+                    true => bar.decrypt(entry, Key::from_slice(pass.as_slice())),
                 }
             }
         }?
