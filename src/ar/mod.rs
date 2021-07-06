@@ -126,7 +126,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
         rmpv::encode::write_value(&mut metafile, &metadata)?;
 
         for (_, entry) in self.header.root.data.iter() {
-            Self::save_entry(dir.as_ref(), entry, &mut self.data, prog)?;
+            Self::save_entry(dir.as_ref(), entry, &mut self.data, prog, true, true)?;
         }
 
         Ok(())
@@ -199,16 +199,31 @@ impl<S: io::Read + io::Seek> Bar<S> {
     pub fn file_data(
         &mut self,
         file: entry::File,
-        //path: impl AsRef<std::path::Path>,
         w: &mut impl io::Write,
         decompress: bool,
         prog: bool,
     ) -> BarResult<()> {
-        //let file = self
-        //.file(path.as_ref())
-        //.ok_or_else(|| BarErr::NoEntry(path.as_ref().to_str().unwrap().to_owned()))?
-        //.clone();
         Self::save_file(&file, w, &mut self.data, decompress, prog)
+    }
+
+    /// Save a file entry to a file, or a folder to a real folder, if the recurse parameter is
+    /// `true`
+    pub fn entry_data(
+        &mut self,
+        dir: impl AsRef<std::path::Path>,
+        entry: entry::Entry,
+        decompress: bool,
+        prog: bool,
+        recurse: bool,
+    ) -> BarResult<()> {
+        Self::save_entry(
+            dir.as_ref(),
+            &entry,
+            &mut self.data,
+            prog,
+            decompress,
+            recurse,
+        )
     }
 }
 

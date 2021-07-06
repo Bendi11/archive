@@ -17,6 +17,7 @@ use sublime_fuzzy::best_match;
 fn input_archive_arg() -> Arg<'static, 'static> {
     Arg::with_name("input-file")
         .help("A full or relative path to an input bar archive")
+        .long_help("A full or relative path from the current working directory to an input bar formatted archive")
         .required(true)
         .takes_value(true)
         .multiple(false)
@@ -46,6 +47,7 @@ fn output_dir_arg() -> Arg<'static, 'static> {
 fn pack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("pack")
         .about("Pack a directory into an archive")
+        .long_about("Pack a directory into a bar formatted archive. If the folder contains a metadata file (.__barmeta.msgpack), then metadata will be preserved")
         .visible_alias("p")
         .arg(Arg::with_name("input-dir")
             .required(true)
@@ -83,13 +85,14 @@ fn unpack_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("unpack")
         .visible_alias("u")
         .about("Unpack a .bar archive into a directory")
+        .long_about("Unpack a packed .bar archive into a directory. A folder in the output-dir argument will be created with the name of the archive")
         .arg(input_archive_arg())
         .arg(output_dir_arg())
 }
 
 fn meta_subcommand() -> App<'static, 'static> {
     SubCommand::with_name("view")
-        .about("View metadata of one file or directory")
+        .about("View metadata of one/many files or directories")
         .visible_alias("m")
         .visible_alias("meta")
         .arg(input_archive_arg())
@@ -115,12 +118,13 @@ fn tree_subcommand() -> App<'static, 'static> {
                 .allow_hyphen_values(true)
                 .takes_value(true),
         )
-        .arg(Arg::with_name("recursive")
-            .help("If enabled, subdirectories will be searched recursively")
-            .takes_value(false)
-            .short("r")
-            .long("recursive")
-            .multiple(false)
+        .arg(
+            Arg::with_name("recursive")
+                .help("If enabled, subdirectories will be searched recursively")
+                .takes_value(false)
+                .short("r")
+                .long("recursive")
+                .multiple(false),
         )
 }
 
@@ -149,10 +153,16 @@ fn extract_subcommand() -> App<'static, 'static> {
         .arg(Arg::with_name("update-as-used")
             .help("Select wether to update the extracted file's metadata as used")
             .takes_value(false)
-            //.multiple(false)
             .required(false)
             .long("consume")
             .short("c")
+        )
+        .arg(Arg::with_name("recursive")
+            .help("If an extracted entry is a folder, select wether subfolders will also be extracted")
+            .long("recursive")
+            .short("r")
+            .takes_value(false)
+            .multiple(false)
         )
 }
 
@@ -216,7 +226,8 @@ fn search_subcommand() -> App<'static, 'static> {
                     Err(_) => Err("The minimum score value must be a number".to_owned()),
                 })
                 .multiple(false)
-                .default_value("0"),
+                .default_value("0")
+                .allow_hyphen_values(true),
         )
 }
 
@@ -428,23 +439,21 @@ fn extract(args: &ArgMatches) -> BarResult<()> {
     let output = path::PathBuf::from(args.value_of("output-dir").unwrap());
 
     for item in args.values_of("extracted-files").unwrap() {
-        let item = get_entry_or_search(&ar, item)
-            .as_file()
-            .ok_or_else(|| BarErr::NoEntry(item.to_owned()))?;
+        let item = get_entry_or_search(&ar, item);
+        //.as_file()
+        //.ok_or_else(|| BarErr::NoEntry(item.to_owned()))?;
         if args.is_present("update-as-used") {
-            item.meta.borrow_mut().used = true;
+            item.meta_mut().used = true;
         }
 
-        let name = item.meta.borrow().name.clone();
-        let name = path::Path::new(&name);
-        let mut file = fs::File::create(output.join(name))?;
         let item = item.clone();
 
-        ar.file_data(
+        ar.entry_data(
+            &output,
             item,
-            &mut file,
             matches!(args.value_of("decompress").unwrap(), "on" | "true"),
             !args.is_present("no-prog"),
+            args.is_present("recursive"),
         )?;
     }
 
@@ -540,9 +549,8 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
                             false => continue,
                         }
                     }
-                }
-                else {
-                    break edit
+                } else {
+                    break edit;
                 }
             };
 

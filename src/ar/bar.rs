@@ -617,6 +617,8 @@ impl<S: Read + Seek> Bar<S> {
         entry: &Entry,
         back: &mut S,
         prog: bool,
+        decompress: bool,
+        recurse: bool,
     ) -> BarResult<()> {
         let path = dir.join(entry.name());
 
@@ -628,17 +630,19 @@ impl<S: Read + Seek> Bar<S> {
                     false => ProgressBar::hidden(),
                 };
 
-                dirprog.set_message(format!("Saving directory {}", dir.meta.borrow().name));
-                std::fs::create_dir_all(path.clone())?;
-                for (_, file) in dir.data.iter() {
-                    Self::save_entry(path.as_ref(), file, back, prog)?;
-                    dirprog.inc(1);
+                if recurse {
+                    dirprog.set_message(format!("Saving directory {}", dir.meta.borrow().name));
+                    std::fs::create_dir_all(path.clone())?;
+                    for (_, file) in dir.data.iter() {
+                        Self::save_entry(path.as_ref(), file, back, prog, decompress, recurse)?;
+                        dirprog.inc(1);
+                    }
                 }
                 dirprog.finish_and_clear();
             }
             Entry::File(file) => {
                 let mut file_data = std::fs::File::create(path)?;
-                Self::save_file(file, &mut file_data, back, true, prog)?;
+                Self::save_file(file, &mut file_data, back, decompress, prog)?;
             }
         }
         Ok(())
