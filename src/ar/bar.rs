@@ -4,7 +4,6 @@
 use super::entry;
 use super::entry::Entry;
 use byteorder::{LittleEndian, ReadBytesExt};
-use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
@@ -82,7 +81,7 @@ const _FILE: u8 = 3;
 const _DIR: u8 = 4;
 const OFFSET: u8 = 5;
 const SIZE: u8 = 6;
-const LASTUPDATE: u8 = 7;
+const _LASTUPDATE: u8 = 7;
 const USED: u8 = 8;
 const COMPRESSMETHOD: u8 = 9;
 
@@ -98,12 +97,6 @@ pub(super) fn ser_meta(meta: &Meta) -> Value {
             Value::Boolean(meta.used),
         ),
     ];
-    if meta.last_update.is_some() {
-        map.push((
-            Value::Integer(Integer::from(LASTUPDATE)),
-            Value::Integer(Integer::from(meta.last_update.unwrap().timestamp())),
-        ))
-    }
     if meta.note.is_some() {
         map.push((
             Value::Integer(Integer::from(NOTE)),
@@ -268,7 +261,6 @@ impl<S: Read + Seek> Bar<S> {
                 Some(meta) => meta.clone(),
                 None => Meta {
                     name: name.clone(),
-                    last_update: Some(Utc::now()),
                     ..Default::default()
                 },
             };
@@ -457,22 +449,6 @@ impl<S: Read + Seek> Bar<S> {
                                 "USED field of metadata is not a boolean".into(),
                             )
                         })?,
-                    last_update: map.get(&(LASTUPDATE as u64)).map_or(
-                        Result::<_, BarErr>::Ok(None),
-                        |val| {
-                            Ok(Some(DateTime::<Utc>::from_utc(
-                                NaiveDateTime::from_timestamp(
-                                    val.as_i64().ok_or_else(|| {
-                                        BarErr::InvalidHeaderFormat(
-                                            "Last update field of metadata is not a u64".into(),
-                                        )
-                                    })?,
-                                    0,
-                                ),
-                                Utc,
-                            )))
-                        },
-                    )?,
                     note: map
                         .get(&(NOTE as u64))
                         .map_or(Result::<_, BarErr>::Ok(None), |val| {

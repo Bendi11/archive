@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use flate2::write::{DeflateEncoder, GzEncoder};
 use indicatif::ProgressBar;
 use std::{
@@ -70,7 +69,7 @@ impl ToString for CompressType {
     }
 }
 
-/// Metadata values that can be applied to all entries, like notes and last updated times
+/// Metadata values that can be applied to all entries, like notes and if this entry has been used / watched before
 #[derive(Debug, Default, Clone)]
 pub struct Meta {
     /// The note that a user left for this entry
@@ -81,9 +80,6 @@ pub struct Meta {
 
     /// The name of this entry
     pub name: String,
-
-    /// The last time that this entry was updated
-    pub last_update: Option<DateTime<Utc>>,
 }
 
 /// The `File` entry is used in the [File](Entry::File) entry variant and contains all possible metadata like notes,

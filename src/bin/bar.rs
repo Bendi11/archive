@@ -251,12 +251,6 @@ fn print_entry(entry: &Entry) {
         }
     };
     let meta = meta.borrow();
-    if let Some(ref last_update) = meta.last_update {
-        println!(
-            "Last updated on {}",
-            last_update.naive_local().format("%v at %r")
-        )
-    }
     if let Some(ref note) = meta.note {
         println!("{}{}", style("Note: ").bold(), note);
     }
