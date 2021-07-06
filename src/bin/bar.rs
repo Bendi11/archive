@@ -231,30 +231,6 @@ fn search_subcommand() -> App<'static, 'static> {
         )
 }
 
-fn rand_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("rand")
-        .visible_alias("pick")
-        .visible_alias("r")
-        .about("Extract a random file or directory from the archive")
-        .arg(input_archive_arg())
-        .arg(Arg::with_name("dir")
-            .help("Select a directory to pick a random entry from")
-            .long("dir")
-            .short("d")
-            .takes_value(true)
-            .allow_hyphen_values(true)
-            .multiple(false)
-        )
-        .arg(Arg::with_name("files-only")
-            .help("If enabled, only random files will be picked, not directories")
-            .short("f")
-            .long("files-only")
-            .takes_value(false)
-            .multiple(false)
-        )
-        .arg(output_dir_arg())
-}
-
 /// Print an entry's metadata
 fn print_entry(entry: &Entry) {
     let meta = match entry {
@@ -277,7 +253,7 @@ fn print_entry(entry: &Entry) {
 
             //Guess the file type from extension
             match mime_guess::from_path(&file.meta.borrow().name).first() {
-                Some(mime) => println!("mime type (from extension): {}",  mime.essence_str()),
+                Some(mime) => println!("mime type (from extension): {}", mime.essence_str()),
                 None => (),
             };
             &file.meta
@@ -324,8 +300,7 @@ fn main() {
         .subcommand(tree_subcommand())
         .subcommand(extract_subcommand())
         .subcommand(edit_subcommand())
-        .subcommand(search_subcommand())
-        .subcommand(rand_subcommand());
+        .subcommand(search_subcommand());
 
     let matches = app.get_matches();
     match match matches.subcommand() {
@@ -336,7 +311,6 @@ fn main() {
         ("extract", Some(args)) => extract(args),
         ("edit", Some(args)) => edit(args),
         ("search", Some(args)) => search(args),
-        ("rand", Some(args)) => rand(args),
         _ => unreachable!(),
     } {
         Ok(()) => (),
@@ -351,61 +325,6 @@ fn main() {
                 .white(),
                 style(e).red()
             );
-        }
-    }
-}
-
-/// Pick a random file or directory from the archive and extract it
-fn rand(args: &ArgMatches) -> BarResult<()> {
-    let mut input = Bar::unpack(args.value_of("input-file").unwrap())?;
-    let output = path::PathBuf::from(args.value_of("output-dir").unwrap());
-    let dir = match args.value_of("dir") {
-        Some(dir) => input.dir(dir).ok_or_else(|| BarErr::NoEntry(dir.to_owned()))?,
-        None => input.root()
-    };
-
-    /// Pick a random entry from the directory
-    fn rand_entry<'a>(dir: &'a entry::Dir, files_only: bool, rand: &mut oorandom::Rand32) -> Option<&'a Entry> {
-        for entry in dir.entries() {
-            match entry {
-                Entry::Dir(d) => {
-                    if !files_only {
-                        //Seven percent chance for any entry to be picked
-                        if rand.rand_range(0..100) < 7 {
-                            return Some(entry)
-                        }
-                    }
-                    if let Some(entry) = rand_entry(d, files_only, rand) {
-                        return Some(entry)
-                    }
-                },
-                Entry::File(_) => {
-                    if rand.rand_range(0..100) > 7 {
-                        return Some(entry)
-                    }
-                }
-            }
-        }
-        None
-    } 
-
-    loop {
-        if let Some(entry) = rand_entry(dir, args.is_present("files-only"), &mut oorandom::Rand32::new(std::time::Instant::now().elapsed().as_secs())) {
-            print_entry(entry);
-            let extract = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme {
-                ..Default::default()
-            }).with_prompt("Extract this entry?")
-            .default(true).interact()?;
-            if extract {
-                let item = entry.as_file().unwrap().clone();
-                drop(dir);
-                let name = item.meta.borrow().name.clone();
-                let name = path::Path::new(&name);
-                let mut file = fs::File::create(output.join(name))?;
-
-                return input.file_data(item.clone(), &mut file, true, !args.is_present("no-prog"))
-            }
-            
         }
     }
 }

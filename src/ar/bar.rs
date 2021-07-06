@@ -8,6 +8,7 @@ use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rmpv::Value;
+use std::convert;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -67,8 +68,17 @@ pub enum BarErr {
     #[error("The metadata file format is invalid: {0}")]
     BadMetadataFile(String),
 
+    #[error("An error occurred while encrypting/decrypting a file {0}")]
+    EncryptError(chacha20poly1305::aead::Error),
+
     #[error("The specified entry at path {0} does not exist")]
     NoEntry(String),
+}
+
+impl convert::From<chacha20poly1305::aead::Error> for BarErr {
+    fn from(e: chacha20poly1305::aead::Error) -> Self {
+        Self::EncryptError(e)
+    }
 }
 
 /// The `BarResult<T>` type is a result with an Err variant of [BarErr]
@@ -81,7 +91,7 @@ const _FILE: u8 = 3;
 const _DIR: u8 = 4;
 const OFFSET: u8 = 5;
 const SIZE: u8 = 6;
-const _LASTUPDATE: u8 = 7;
+const ENCRYPTION: u8 = 7;
 const USED: u8 = 8;
 const COMPRESSMETHOD: u8 = 9;
 
@@ -303,6 +313,7 @@ impl<S: Read + Seek> Bar<S> {
                         off: *off,
                         size: size as u32,
                         meta: RefCell::new(meta),
+                        enc: entry::EncryptType::None,
                     };
                     *off += size;
                     std::io::copy(&mut read_prog.wrap_read(&mut data), writer)?;
@@ -370,6 +381,14 @@ impl<S: Read + Seek> Bar<S> {
                     BarErr::InvalidHeaderFormat("SIZE field in FILE entry is not a u64".into())
                 })? as u32,
             meta: RefCell::new(meta),
+            enc: match val.get(&(ENCRYPTION as u64)) {
+                Some(nonce) => entry::EncryptType::ChaCha20(nonce.as_u64().ok_or_else(|| {
+                    BarErr::InvalidHeaderFormat(
+                        "ENC field in FILE entry is present but is not a u64".into(),
+                    )
+                })?),
+                None => entry::EncryptType::None,
+            },
             compression,
         })
     }

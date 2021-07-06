@@ -82,6 +82,23 @@ pub struct Meta {
     pub name: String,
 }
 
+/// The `EncryptType` enum is stored in the [File] struct and specifies what kind of encryption + nonce if any
+/// is present for the file
+#[derive(Clone, Debug)]
+pub enum EncryptType {
+    /// ChaCha20 with nonce bytes
+    ChaCha20(u64),
+
+    /// No encryption
+    None,
+}
+
+impl Default for EncryptType {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// The `File` entry is used in the [File](Entry::File) entry variant and contains all possible metadata like notes,
 #[derive(Debug, Clone)]
 pub struct File {
@@ -96,9 +113,13 @@ pub struct File {
 
     /// The size of this file in the file data section in bytes
     pub(crate) size: u32,
+
+    /// The encryption method (if any) that this file is encrypted with
+    pub(crate) enc: EncryptType,
 }
 
 impl File {
+    /// Write this `File`s data to a writer, compressing / encrypting bytes as needed
     pub fn write_data<W: Write, R: Read + Seek>(
         &self,
         off: &mut u64,
@@ -158,6 +179,7 @@ impl File {
             off: *off,
             size: bytes.len() as u32,
             compression: self.compression,
+            enc: self.enc.clone(),
         });
 
         this_prog.set_message("Writing compressed bytes");
@@ -433,6 +455,7 @@ mod tests {
                     compression: "none".parse().unwrap(),
                     off: 0,
                     size: 0,
+                    enc: EncryptType::None,
                 }),
             ),
             _ => panic!("Not a directory!"),

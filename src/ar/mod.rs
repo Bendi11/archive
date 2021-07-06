@@ -216,7 +216,6 @@ impl<S: io::Read + io::Seek> Bar<S> {
         prog: bool,
         recurse: bool,
     ) -> BarResult<()> {
-
         let path = dir.as_ref().join(entry.name());
 
         match entry {
@@ -230,7 +229,14 @@ impl<S: io::Read + io::Seek> Bar<S> {
                 dirprog.set_message(format!("Saving directory {}", dir.meta.borrow().name));
                 std::fs::create_dir_all(path.clone())?;
                 for (_, file) in dir.data.iter() {
-                    Self::save_entry(path.as_ref(), file, &mut self.data, prog, decompress, recurse)?;
+                    Self::save_entry(
+                        path.as_ref(),
+                        file,
+                        &mut self.data,
+                        prog,
+                        decompress,
+                        recurse,
+                    )?;
                     dirprog.inc(1);
                 }
                 dirprog.finish_and_clear();

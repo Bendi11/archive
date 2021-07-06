@@ -24,7 +24,7 @@ Some constants used instead of strings to save space in maps:
 - DIR: 4,
 - OFFSET: 5,
 - SIZE: 6,
-- LASTUPDATE: 7,
+- ENC: 7,
 - USED: 8,
 - COMPRESSMETHOD: 9,
 
@@ -49,10 +49,10 @@ File: Map [
     Integer SIZE: Integer (size),
     Integer META: <Meta>
     Integer COMPRESSMETHOD: String(compression method),
+    Integer ENC: u64 (nonce)
 ]
 
 Meta: Map {
-    Integer LASTUPDATE: Integer (last update),
     Integer USED: Boolean (if the file has been used),
     Integer NOTE: String (note),
     Integer NAME: String (name),

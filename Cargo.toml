@@ -22,8 +22,8 @@ byteorder = "1.4" # For reading u64s in an easier and platform agnostic way
 tempfile = "3.2" # For backing storage of archives
 flate2 = "1.0" # For compressing files individually in archive
 
-oorandom = "11.1" # For picking a random file from the archive
 mime_guess = "2.0" # For guessing displayed file types
+chacha20poly1305 = "0.7" # For encrypting files in the archive
 
 rmp = "0.8" # For header messagepack se/de serializing
 rmpv = "0.4" # For heeader messagepack
