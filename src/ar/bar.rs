@@ -9,6 +9,7 @@ use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rmpv::Value;
+use std::cell::Cell;
 use std::convert;
 use std::{
     cell::RefCell,
@@ -43,6 +44,9 @@ impl<S: Read + Seek> fmt::Debug for Bar<S> {
 pub struct Header {
     /// Metadata about the entire archive
     pub meta: Meta,
+
+    /// The nonce counter
+    pub nonce: Nonce,
 
     /// The root directory of the header
     pub root: Dir,
@@ -164,7 +168,7 @@ pub(super) fn ser_fileentry(file: &entry::File) -> Value {
 
     ];
     if file.is_encrypted() {
-        let nonce = match file.enc {
+        let nonce = match file.enc.get() {
             entry::EncryptType::ChaCha20(nonce) => nonce,
             _ => unreachable!()
         };
@@ -191,6 +195,7 @@ impl Bar<io::Cursor<Vec<u8>>> {
                     name: name.to_string(),
                     ..Default::default()
                 },
+                nonce: Nonce::clone_from_slice(&[0u8 ; 12]),
                 root: entry::Dir {
                     meta: RefCell::new(Meta {
                         name: "root".to_owned(),
@@ -324,12 +329,13 @@ impl<S: Read + Seek> Bar<S> {
                     let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
                     let size = data.metadata()?.len();
 
+
                     let file = entry::File {
                         compression: compress,
                         off: *off,
                         size: size as u32,
                         meta: RefCell::new(meta),
-                        enc: entry::EncryptType::None,
+                        enc: Cell::new(entry::EncryptType::None),
                     };
                     *off += size;
                     std::io::copy(&mut read_prog.wrap_read(&mut data), writer)?;
@@ -397,14 +403,14 @@ impl<S: Read + Seek> Bar<S> {
                     BarErr::InvalidHeaderFormat("SIZE field in FILE entry is not a u64".into())
                 })? as u32,
             meta: RefCell::new(meta),
-            enc: match val.get(&(ENCRYPTION as u64)) {
+            enc: std::cell::Cell::new(match val.get(&(ENCRYPTION as u64)) {
                 Some(nonce) => entry::EncryptType::ChaCha20(Nonce::clone_from_slice(nonce.as_slice().ok_or_else(|| {
                     BarErr::InvalidHeaderFormat(
                         "ENC field in FILE entry is present but is not an array".into(),
                     )
                 })?)),
                 None => entry::EncryptType::None,
-            },
+            }),
             compression,
         })
     }
@@ -533,11 +539,12 @@ impl<S: Read + Seek> Bar<S> {
                 header_val
             ))
         })?;
-        match (header_val.get(0), header_val.get(1)) {
-            (Some(metadata), Some(root)) => {
+        match (header_val.get(0), header_val.get(1), header_val.get(2)) {
+            (Some(metadata), Some(nonce), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
                 let dir = Self::read_dir_entry(root)?;
-                Ok(Header { meta, root: dir })
+                let nonce = nonce.as_slice().ok_or_else(|| BarErr::InvalidHeaderFormat("The nonce of the header is not a byte slice".into()))?;
+                Ok(Header { meta, root: dir, nonce: Nonce::clone_from_slice(nonce) })
             }
             _ => Err(BarErr::InvalidHeaderFormat(
                 "The top level header array does not contain two elements".into(),

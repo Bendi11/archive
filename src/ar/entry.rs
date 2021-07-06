@@ -1,12 +1,7 @@
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, aead::{AeadInPlace, NewAead}};
 use flate2::write::{DeflateEncoder, GzEncoder};
 use indicatif::ProgressBar;
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    io::{Read, Seek, SeekFrom, Write},
-    path,
-};
+use std::{cell::{Cell, RefCell}, collections::HashMap, io::{Read, Seek, SeekFrom, Write}, path};
 
 use super::BarResult;
 
@@ -87,7 +82,7 @@ pub struct Meta {
 
 /// The `EncryptType` enum is stored in the [File] struct and specifies what kind of encryption + nonce if any
 /// is present for the file
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum EncryptType {
     /// ChaCha20 with nonce bytes
     ChaCha20(Nonce),
@@ -118,7 +113,7 @@ pub struct File {
     pub(crate) size: u32,
 
     /// The encryption method (if any) that this file is encrypted with
-    pub(crate) enc: EncryptType,
+    pub(crate) enc: Cell<EncryptType>,
 }
 
 impl File {
@@ -208,12 +203,12 @@ impl File {
 
     /// Encrypt this file's data in place using the given key and nonce.
     /// This is a no-op if the file is already encrypted
-    pub fn encrypt(&mut self, key: &Key, nonce: &Nonce, back: &mut (impl Write + Read + Seek)) -> BarResult<()> {
+    pub fn encrypt(&self, key: &Key, nonce: &Nonce, back: &mut (impl Write + Read + Seek)) -> BarResult<()> {
         if self.is_encrypted() {
             return Ok(())
         }
 
-        self.enc = EncryptType::ChaCha20(nonce.clone());
+        self.enc.set(EncryptType::ChaCha20(nonce.clone()));
         let cipher = ChaCha20Poly1305::new(key);
         back.seek(SeekFrom::Start(self.off))?;
 
@@ -221,12 +216,40 @@ impl File {
         back.read_exact(&mut data)?;
 
         cipher.encrypt_in_place(nonce, b"", &mut data)?;
+
+        back.seek(SeekFrom::Current(-(self.size as i64)))?;
+        back.write_all(data.as_slice())?;
+        Ok(())
+    }
+
+
+    /// Decrypt this file's data in place using the given key,
+    /// this is a no-op if the file is not encrypted
+    pub fn decrypt(&self, key: &Key, back: &mut (impl Write + Read + Seek)) -> BarResult<()> {
+        if !self.is_encrypted() {
+            return Ok(())
+        }
+        let nonce = match self.enc.get() {
+            EncryptType::ChaCha20(nonce) => nonce,
+            _ => unreachable!(),
+        };
+
+        self.enc.set(EncryptType::None);
+        let cipher = ChaCha20Poly1305::new(key);
+        back.seek(SeekFrom::Start(self.off))?;
+        let mut data = vec![0u8 ; self.size as usize];
+        back.read_exact(&mut data)?;
+
+        cipher.decrypt_in_place(&nonce, b"", &mut data)?;
+
+        back.seek(SeekFrom::Current(-(self.size as i64)))?;
+        back.write_all(&data)?;
         Ok(())
     }
 
     /// Check if this file's data is encrypted
-    pub const fn is_encrypted(&self) -> bool {
-        match self.enc {
+    pub fn is_encrypted(&self) -> bool {
+        match self.enc.get() {
             EncryptType::ChaCha20(_) => true,
             _ => false
         }
@@ -488,7 +511,7 @@ mod tests {
                     compression: "none".parse().unwrap(),
                     off: 0,
                     size: 0,
-                    enc: EncryptType::None,
+                    enc: Cell::new(EncryptType::None),
                 }),
             ),
             _ => panic!("Not a directory!"),
