@@ -23,6 +23,8 @@ chrono = "0.4" # For file timestamps
 tempfile = "3.2" # For backing storage of archives
 flate2 = "1.0" # For compressing files individually in archive
 
+oorandom = "11.1" # For picking a random file from the archive
+
 rmp = "0.8" # For header messagepack se/de serializing
 rmpv = "0.4" # For heeader messagepack
 
