@@ -27,7 +27,7 @@ chacha20poly1305 = "0.7" # For encrypting files in the archive
 
 rmp = "0.8" # For header messagepack se/de serializing
 rmpv = "0.4" # For heeader messagepack
-shell_words = "1" # For command parsing
+shellwords = "1" # For command parsing
 
 [dev-dependencies]
 criterion = "0.3" # For benchmarking archive performance

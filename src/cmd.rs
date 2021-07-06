@@ -1,7 +1,7 @@
 use std::{ffi::OsString, fmt};
 
 use clap::{App, ArgMatches};
-use hashbrown::HashMap;
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// The `Prog` struct tracks all commands and contains methods to run them
