@@ -4,11 +4,27 @@ pub mod entry;
 use bar::{ser_header, Header};
 pub use bar::{Bar, BarErr, BarResult};
 use byteorder::{LittleEndian, WriteBytesExt};
+use chacha20poly1305::Key;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use entry::{CompressType, Entry, Meta};
 use std::cell::RefCell;
 use std::io::{self, Seek, SeekFrom, Write};
+
+fn increment_bytes(b256: &mut [u8], mut amount: u64) -> u64 {
+    let mut i = b256.len() - 1;
+
+    while amount > 0 {
+        amount += b256[i] as u64;
+        b256[i] = amount as u8;
+        amount /= 256;
+
+        if i == 0 { break; }
+        i -= 1;
+    }
+
+    amount
+}
 
 impl<S: io::Read + io::Write + io::Seek> Bar<S> {
     /// Pack an entire directory into a `Bar` struct using a given compression method for every file
@@ -62,6 +78,20 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
             },
             data: backend,
         })
+    }
+
+    /// Encrypt a file using the given key, if the file is already encrypted then this is a no op
+    #[inline]
+    pub fn encrypt(&mut self, file: entry::File, password: &Key) -> BarResult<()> {
+        file.encrypt(password, &self.header.nonce, &mut self.data)?;
+        increment_bytes(&mut self.header.nonce, 1); //Increment our nonce counter by 1
+        Ok(())
+    }
+
+    /// Decrypt a file using the given key 
+    #[inline]
+    pub fn decrypt(&mut self, file: entry::File, password: &Key) -> BarResult<()> {
+        file.decrypt(password, &mut self.data)
     }
 }
 
@@ -148,7 +178,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
     pub fn save<W: io::Write>(&mut self, writer: &mut W, prog: bool) -> BarResult<()> {
         let prog = match prog {
             true => ProgressBar::new_spinner()
-                .with_style(ProgressStyle::default_spinner().tick_chars(".,'`*@*`',")),
+                .with_style(ProgressStyle::default_spinner().tick_chars(".,'`*`',")),
             false => ProgressBar::hidden(),
         };
         prog.enable_steady_tick(33);

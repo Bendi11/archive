@@ -283,7 +283,7 @@ impl<S: Read + Seek> Bar<S> {
                 Ok((path.to_owned().replace("\\", "/"), meta))
             })
             .collect::<BarResult<HashMap<String, Meta>>>()?;
-            
+
         Ok((nonce, map))
     }
 
@@ -610,7 +610,7 @@ impl<S: Read + Seek> Bar<S> {
         let prog = match prog {
             true => ProgressBar::new(file.size as u64).with_style(
                 ProgressStyle::default_bar()
-                    .template("[{bar}] {bytes}/{total_bytes} {binary_bytes_per_sec} {msg}")
+                    .template("[{bar}] {bytes} {binary_bytes_per_sec} {msg}")
                     .progress_chars("=>-"),
             ),
             false => ProgressBar::hidden(),
@@ -621,7 +621,7 @@ impl<S: Read + Seek> Bar<S> {
         prog.wrap_read(back).read_exact(&mut data)?;
         prog.reset();
 
-        prog.set_message(format!("Saving file {}", file.meta.borrow().name));
+        prog.set_message(format!("Saving unpacked file {}", file.meta.borrow().name));
 
         let bytes = match decompress {
             true => match file.compression {
@@ -644,6 +644,7 @@ impl<S: Read + Seek> Bar<S> {
             },
             false => data,
         };
+
         io::copy(&mut bytes.as_slice(), &mut prog.wrap_write(writer))?;
         prog.finish_and_clear();
 

@@ -231,6 +231,33 @@ fn search_subcommand() -> App<'static, 'static> {
         )
 }
 
+fn encrypt_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("crypt")
+        .visible_alias("lock")
+        .about("Encrypt / decrypt a list of files from the archive")
+        .arg(input_archive_arg())
+        .arg(Arg::with_name("entries")
+            .multiple(true)
+            .takes_value(true)
+            .required(true)
+            .help("A list of entries to encrypt / decrypt from the archive")
+        )
+        .arg(Arg::with_name("one-password")
+            .help("If only one password is desired for all files, then enable this option")
+            .takes_value(true)
+            .short("p")
+            .long("password")
+            .multiple(false)
+        )
+        .arg(Arg::with_name("decrypt")
+            .help("Enable this option to decrypt files instead of encrypting them")
+            .short("d")
+            .long("decrypt")
+            .takes_value(false)
+            .multiple(false)
+        )
+}
+
 /// Print an entry's metadata
 fn print_entry(entry: &Entry) {
     let meta = match entry {
@@ -255,7 +282,14 @@ fn print_entry(entry: &Entry) {
                 "{}",
                 style(format!("compression: {}", file.compression().to_string())).italic()
             );
-            
+
+            if file.is_encrypted() {
+                println!(
+                    "{}",
+                    style("encrypted").red(),
+                );
+            }
+
             //Guess the file type from extension
             match mime_guess::from_path(&file.meta.borrow().name).first() {
                 Some(mime) => println!("mime type (from extension): {}", mime.essence_str()),
@@ -305,7 +339,8 @@ fn main() {
         .subcommand(tree_subcommand())
         .subcommand(extract_subcommand())
         .subcommand(edit_subcommand())
-        .subcommand(search_subcommand());
+        .subcommand(search_subcommand())
+        .subcommand(encrypt_subcommand());
 
     let matches = app.get_matches();
     match match matches.subcommand() {
@@ -316,6 +351,7 @@ fn main() {
         ("extract", Some(args)) => extract(args),
         ("edit", Some(args)) => edit(args),
         ("search", Some(args)) => search(args),
+        ("crypt", Some(args)) => crypt(args),
         _ => unreachable!(),
     } {
         Ok(()) => (),
@@ -332,6 +368,40 @@ fn main() {
             );
         }
     }
+}
+
+fn crypt(args: &ArgMatches) -> BarResult<()> {
+    use chacha20poly1305::Key;
+    let mut bar = Bar::unpack(args.value_of("input-file").unwrap())?;
+
+    for name in args.values_of("entries").unwrap() {
+        let entry = match get_entry_or_search(bar.root(), name)
+            .as_file() {
+                Some(file) => file,
+                None => {
+                    eprintln!("{}", style(format!("Entry {} is a directory, not a file", name)).red());
+                    continue
+                },
+            }.clone();
+
+        match args.value_of("one-password") {
+            Some(pass) => match args.is_present("decrypt") {
+                false => bar.encrypt(entry, Key::from_slice(pass.as_bytes())),
+                true => bar.decrypt(entry, Key::from_slice(pass.as_bytes())),
+            }
+            None => {
+                let pass = rustyline::Editor::<()>::new()
+                    .readline(&*format!("Password for file {}", name)).unwrap();
+                match args.is_present("decrypt") {
+                    false => bar.encrypt(entry, Key::from_slice(pass.as_bytes())),
+                    true => bar.decrypt(entry, Key::from_slice(pass.as_bytes())),
+                }
+            }
+        }?
+    }
+
+    bar.save_updated(!args.is_present("no-prog"))?;
+    Ok(())
 }
 
 /// Pack a directory into a file
