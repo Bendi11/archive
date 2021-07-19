@@ -1,7 +1,10 @@
-use bar::{ar::{
-    entry::{self, Entry},
-    Bar, BarErr, BarResult,
-}, enc};
+use bar::{
+    ar::{
+        entry::{self, Entry},
+        Bar, BarErr, BarResult,
+    },
+    enc,
+};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use console::{style, Color, Style};
 use dialoguer::theme::ColorfulTheme;
@@ -320,10 +323,9 @@ fn print_entry(entry: &Entry) {
             );
 
             //Guess the file type from extension
-            match mime_guess::from_path(&file.meta.borrow().name).first() {
-                Some(mime) => println!("mime type (from extension): {}", mime.essence_str()),
-                None => (),
-            };
+            if let Some(mime) = mime_guess::from_path(&file.meta.borrow().name).first() {
+                println!("mime type (from extension): {}", mime.essence_str());
+            }
             &file.meta
         }
         Entry::Dir(dir) => {
@@ -406,12 +408,16 @@ fn enc(args: &ArgMatches) -> BarResult<()> {
     let filename = args.value_of("input-file").unwrap();
     let output = args.value_of("output-file").unwrap();
     let mut password = args.value_of("password").unwrap().to_owned();
-    password.extend("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0".chars());
-    
+    password.push_str("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+
     let keep = args.is_present("keep-file");
 
     let mut file = fs::OpenOptions::new().read(true).open(filename)?;
-    let mut output = fs::OpenOptions::new().write(true).create(true).truncate(true).open(output)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)?;
 
     enc::encrypt(&mut file, &mut output, &password.as_bytes()[0..16])?;
     if !keep {
@@ -427,12 +433,16 @@ fn dec(args: &ArgMatches) -> BarResult<()> {
     let filename = args.value_of("input-file").unwrap();
     let output = args.value_of("output-file").unwrap();
     let mut password = args.value_of("password").unwrap().to_owned();
-    password.extend("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0".chars());
-    
+    password.push_str("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+
     let keep = args.is_present("keep-file");
 
     let mut file = fs::OpenOptions::new().read(true).open(filename)?;
-    let mut output = fs::OpenOptions::new().write(true).create(true).truncate(true).open(output)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)?;
 
     enc::decrypt(&mut file, &mut output, &password.as_bytes()[0..16])?;
     if !keep {
@@ -644,9 +654,8 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
                     Ok(e) => e,
                 };
 
-                if edit.contains(|c| match c {
-                    '/' | '\\' | '<' | '>' | ':' | '\"' | '|' | '?' | '*' => true,
-                    _ => false,
+                if edit.contains(|c| {
+                    matches!(c, '/' | '\\' | '<' | '>' | ':' | '\"' | '|' | '?' | '*')
                 }) | edit.ends_with('.')
                     | edit.ends_with(' ')
                 {

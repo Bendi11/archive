@@ -197,7 +197,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
 
     /// Return a mutable iterator over all entries in the archive
     #[inline]
-    pub fn entries_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut Entry> {
+    pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut Entry> {
         self.header.root.entries_mut()
     }
 
