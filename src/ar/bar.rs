@@ -2,7 +2,6 @@
 //!
 
 use super::entry;
-use chacha20poly1305::Nonce;
 use super::entry::Entry;
 use byteorder::{LittleEndian, ReadBytesExt};
 use flate2::read::{DeflateDecoder, GzDecoder};
@@ -43,9 +42,6 @@ impl<S: Read + Seek> fmt::Debug for Bar<S> {
 pub struct Header {
     /// Metadata about the entire archive
     pub meta: Meta,
-
-    /// The nonce counter
-    pub nonce: Nonce,
 
     /// The root directory of the header
     pub root: Dir,
@@ -140,7 +136,7 @@ pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
 }
 
 pub(super) fn ser_header(header: &Header) -> Value {
-    Value::Array(vec![ser_meta(&header.meta), Value::Binary(header.nonce.to_vec()), ser_direntry(&header.root)])
+    Value::Array(vec![ser_meta(&header.meta), ser_direntry(&header.root)])
 }
 
 /// Create a file value from a `File` entry
@@ -179,7 +175,6 @@ impl Bar<io::Cursor<Vec<u8>>> {
                     name: name.to_string(),
                     ..Default::default()
                 },
-                nonce: Nonce::clone_from_slice(&[0u8 ; 12]),
                 root: entry::Dir {
                     meta: RefCell::new(Meta {
                         name: "root".to_owned(),
@@ -223,38 +218,23 @@ impl<S: Read + Seek> Bar<S> {
             ser_meta(&self.header.meta),
         ));
 
-        Value::Array(vec![
-            Value::Binary(self.header.nonce.to_vec()),
-            Value::Map(vec)
-        ])
+
+        Value::Map(vec)
     }
 
     /// Read all entry metadata from a root file when packing a previously unpacked directory
     pub(super) fn read_all_entry_metadata(
         file: impl AsRef<std::path::Path>,
-    ) -> BarResult<(Nonce, HashMap<String, Meta>)> {
+    ) -> BarResult<HashMap<String, Meta>> {
         let mut data = match std::fs::File::open(file.as_ref()) {
             Ok(data) => data,
             Err(_) => {
-                return Ok((Nonce::clone_from_slice(&[0u8 ; 12]), HashMap::new()));
+                return Ok(HashMap::new());
             }
         };
         let val = rmpv::decode::read_value(&mut data)?;
 
-        let val = val.as_array().ok_or_else(|| {
-            BarErr::BadMetadataFile("Entry metadata file's main content is not an array".into())
-        })?;
-
-        let nonce = val.get(0).ok_or_else(|| {
-            BarErr::BadMetadataFile("Entry's metadata file header array is not long enough".into())
-        })?.as_slice().ok_or_else(|| {
-            BarErr::BadMetadataFile("Nonce of header file is not a byte slice".into())
-        })?;
-        let nonce = Nonce::clone_from_slice(nonce);
-
-        let val = val.get(1).ok_or_else(|| {
-            BarErr::BadMetadataFile("Header array is not long enough".into())
-        })?.as_map().ok_or_else(|| {
+        let val = val.as_map().ok_or_else(|| {
             BarErr::BadMetadataFile("Header map of paths to metadata is not a map".into())
         })?;
 
@@ -268,7 +248,7 @@ impl<S: Read + Seek> Bar<S> {
             })
             .collect::<BarResult<HashMap<String, Meta>>>()?;
 
-        Ok((nonce, map))
+        Ok(map)
     }
 
     /// Read all files in a directory into a list of [Entry]s, reading metadata files if possible
@@ -535,12 +515,11 @@ impl<S: Read + Seek> Bar<S> {
                 header_val
             ))
         })?;
-        match (header_val.get(0), header_val.get(1), header_val.get(2)) {
-            (Some(metadata), Some(nonce), Some(root)) => {
+        match (header_val.get(0), header_val.get(1)) {
+            (Some(metadata), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
                 let dir = Self::read_dir_entry(root)?;
-                let nonce = nonce.as_slice().ok_or_else(|| BarErr::InvalidHeaderFormat("The nonce of the header is not a byte slice".into()))?;
-                Ok(Header { meta, root: dir, nonce: Nonce::clone_from_slice(nonce) })
+                Ok(Header { meta, root: dir})
             }
             _ => Err(BarErr::InvalidHeaderFormat(
                 "The top level header array does not contain three elements".into(),
