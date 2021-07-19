@@ -17,7 +17,6 @@ use std::{
     path,
     str::FromStr,
 };
-use chacha20poly1305::Nonce;
 use thiserror::Error;
 
 use crate::ar::entry::{CompressMethod, CompressType, Dir, Meta};
@@ -44,35 +43,9 @@ pub struct Header {
     /// Metadata about the entire archive
     pub meta: Meta,
 
-    /// If this archive is encrypted, and if so, what encryption it is
-    pub enc: EncryptType,
-
     /// The root directory of the header
     pub root: Dir,
 }
-
-/// The `EncryptType` enum is stored in the [File] struct and specifies what kind of encryption + nonce if any
-/// is present for the file
-#[derive(Clone, Debug, Copy)]
-pub enum EncryptType {
-    /// ChaCha20 with nonce bytes
-    ChaCha20(Nonce),
-
-    /// No encryption
-    None,
-}
-
-impl EncryptType {
-    pub const NONE: u8 = 0;
-    pub const CHACHA20: u8 = 1;
-}
-
-impl Default for EncryptType {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 
 /// The `BarErr` enum enumerates all possible errors that can occur when reading from or writing to a
 /// bar file
@@ -97,6 +70,9 @@ pub enum BarErr {
 
     #[error("An error occurred while encrypting/decrypting a file {0}")]
     EncryptError(chacha20poly1305::aead::Error),
+
+    #[error("Packed bar archive is encrypted and cannot be opened without a password")]
+    FileEncrypted,
 
     #[error("The specified entry at path {0} does not exist")]
     NoEntry(String),
@@ -163,14 +139,7 @@ pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
 }
 
 pub(super) fn ser_header(header: &Header) -> Value {
-    Value::Array(vec![ser_meta(&header.meta), Value::Integer(rmpv::Integer::from(match header.enc {
-        EncryptType::ChaCha20(_) => EncryptType::CHACHA20,
-        EncryptType::None => EncryptType::NONE
-
-    })), Value::Binary(match header.enc {
-        EncryptType::ChaCha20(nonce) => nonce.to_vec(),
-        EncryptType::None => vec![]
-    }), ser_direntry(&header.root)])
+    Value::Array(vec![ser_meta(&header.meta), ser_direntry(&header.root)])
 }
 
 /// Create a file value from a `File` entry
@@ -215,7 +184,6 @@ impl Bar<io::Cursor<Vec<u8>>> {
                     }),
                     data: HashMap::new(),
                 },
-                enc: Default::default()
             },
         }
     }
@@ -548,23 +516,12 @@ impl<S: Read + Seek> Bar<S> {
                 header_val
             ))
         })?;
-        match (header_val.get(0), header_val.get(1), header_val.get(2), header_val.get(3)) {
-            (Some(metadata), Some(enc), Some(nonce), Some(root)) => {
+        match (header_val.get(0), header_val.get(1)) {
+            (Some(metadata), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
                 let dir = Self::read_dir_entry(root)?;
-                
-                let enc = enc.as_u64().ok_or_else(|| BarErr::InvalidHeaderFormat("Encoding type is not a u64".into()))?;
-                let nonce = nonce.as_slice().ok_or_else(|| BarErr::InvalidHeaderFormat("Header nonce is not a binary array".into()))?;
-                let enc = match enc as u8 {
-                    EncryptType::CHACHA20 => {
-                        EncryptType::ChaCha20(Nonce::clone_from_slice(nonce))
-                    },
-                    EncryptType::NONE => EncryptType::None,
-                    other => return Err(BarErr::InvalidHeaderFormat(format!("Encoding type {:X} is not valid", other))),
-                };
 
-                
-                Ok(Header { meta, root: dir, enc, })
+                Ok(Header { meta, root: dir })
             }
             _ => Err(BarErr::InvalidHeaderFormat(
                 "The top level header array does not contain four elements".into(),

@@ -58,7 +58,6 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
                     .map(|entry| (entry.name(), entry))
                     .collect(),
                 },
-                enc: Default::default()
             },
             data: backend,
         })
@@ -69,6 +68,17 @@ impl<S: io::Read + io::Seek> Bar<S> {
     /// Get the metadata of this bar archive
     pub fn meta(&self) -> &Meta {
         &self.header.meta
+    }
+
+    /// Unpack a packed archive from a file or other storage, like an in-memory byte array.
+    /// See also [unpack](fn@Bar::unpack)
+    pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
+        let header = Self::read_header(&mut storage)?;
+
+        Ok(Self {
+            header,
+            data: storage,
+        })
     }
 
     /// Get a reference to an entry in the Bar archive. This should
@@ -173,16 +183,6 @@ impl<S: io::Read + io::Seek> Bar<S> {
         Ok(())
     }
 
-    /// Unpack a packed archive from a file or other storage, like an in-memory byte array.
-    /// See also [unpack](fn@Bar::unpack)
-    pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
-        let header = Self::read_header(&mut storage)?;
-        Ok(Self {
-            header,
-            data: storage,
-        })
-    }
-
     /// Return the root folder of the archive that contains all subfolders and files
     #[inline]
     #[must_use]
@@ -264,7 +264,7 @@ impl Bar<std::fs::File> {
     /// ```no_run
     /// # use bar::Bar;
     /// # fn main() {
-    /// let archive = Bar::unpack("./archive.bar").unwrap();
+    /// let archive = Bar::unpack("./archive.bar", true).unwrap();
     /// # }
     /// ```
     pub fn unpack(file: impl AsRef<std::path::Path>) -> BarResult<Self> {

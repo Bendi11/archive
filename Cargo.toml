@@ -23,11 +23,9 @@ tempfile = "3.2" # For backing storage of archives
 flate2 = "1.0" # For compressing files individually in archive
 
 mime_guess = "2.0" # For guessing displayed file types
-chacha20poly1305 = "0.7" # For encrypting files in the archive
 
 rmp = "0.8" # For header messagepack se/de serializing
 rmpv = "0.4" # For heeader messagepack
-shellwords = "1" # For command parsing
 
 [dev-dependencies]
 criterion = "0.3" # For benchmarking archive performance

@@ -82,7 +82,6 @@ pub struct Meta {
     pub name: String,
 }
 
-
 /// The `File` entry is used in the [File](Entry::File) entry variant and contains all possible metadata like notes,
 #[derive(Debug, Clone)]
 pub struct File {
