@@ -101,7 +101,6 @@ fn meta_subcommand() -> App<'static, 'static> {
                 .help("A list of paths to fetch the metadata of")
                 .multiple(true)
                 .takes_value(true)
-                .required(true),
         )
 }
 
@@ -370,7 +369,10 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
     let cols = console::Term::stdout().size().1;
 
     if !args.is_present("entry-paths") {
-        
+        println!("{}", style(format!("Archive {}", bar.meta().name)).bold());
+        if let Some(ref note) = bar.meta().note {
+            println!("{}{}", style("note: ").italic(), note);
+        }
     }
     else {
         for arg in args.values_of("entry-paths").unwrap() {
