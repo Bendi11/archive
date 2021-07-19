@@ -6,7 +6,7 @@ use crate::ar::BarResult;
 use std::io::{Read, Seek, Write, SeekFrom};
 
 /// Encrypt a reader, writing the encrypted bytes to a writer
-pub fn encrypt(reader: &mut impl Read, writer: &mut impl Write, key: &[u8 ; 16]) -> BarResult<()> {
+pub fn encrypt(reader: &mut impl Read, writer: &mut impl Write, key: &[u8]) -> BarResult<()> {
     let key = GenericArray::from_slice(key);
     let cipher = Aes128::new(key);
     let mut buf = GenericArray::<u8, U16>::default();
@@ -25,7 +25,7 @@ pub fn encrypt(reader: &mut impl Read, writer: &mut impl Write, key: &[u8 ; 16])
 }
 
 /// Decrypt a reader, writing decrypted bytes to a writer
-pub fn decrypt(reader: &mut impl Read, writer: &mut impl Write, key: &[u8 ; 16]) -> BarResult<()> {
+pub fn decrypt(reader: &mut impl Read, writer: &mut impl Write, key: &[u8]) -> BarResult<()> {
     let key = GenericArray::from_slice(key);
     let cipher = Aes128::new(key);
     let mut buf = GenericArray::<u8, U16>::default();
@@ -44,7 +44,7 @@ pub fn decrypt(reader: &mut impl Read, writer: &mut impl Write, key: &[u8 ; 16])
 }
 
 /// Encrypt a buffer in place
-pub fn encrypt_in_place(plaintxt: &mut (impl Read + Write + Seek), key: &[u8 ; 16]) -> BarResult<()> {
+pub fn encrypt_in_place(plaintxt: &mut (impl Read + Write + Seek), key: &[u8]) -> BarResult<()> {
     let key = GenericArray::from_slice(key);
     let cipher = Aes128::new(key);
     let mut buf = GenericArray::<u8, U16>::default();
@@ -66,7 +66,7 @@ pub fn encrypt_in_place(plaintxt: &mut (impl Read + Write + Seek), key: &[u8 ; 1
 }
 
 /// Decrypt a buffer in place
-pub fn decrypt_in_place(ciphertxt: &mut (impl Read + Write + Seek), key: &[u8 ; 16]) -> BarResult<()> {
+pub fn decrypt_in_place(ciphertxt: &mut (impl Read + Write + Seek), key: &[u8]) -> BarResult<()> {
     let key = GenericArray::from_slice(key);
     let cipher = Aes128::new(key);
     let mut buf = GenericArray::<u8, U16>::default();
