@@ -1,4 +1,4 @@
-use aes::cipher::consts::U16;
+use aes::cipher::consts::{U16, U8};
 use aes::{
     cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, NewBlockCipher},
     Aes128,
@@ -7,11 +7,11 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::ar::BarResult;
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufWriter, Read, Seek, SeekFrom, Write};
 
 /// Encrypt a reader, writing the encrypted bytes to a writer
 pub fn encrypt(
-    reader: &mut impl Read,
+    reader: &mut impl BufRead,
     writer: &mut impl Write,
     key: &[u8],
     prog: bool,
@@ -24,29 +24,34 @@ pub fn encrypt(
         ),
         false => ProgressBar::hidden(),
     };
+    //let writer = BufWriter::new(writer);
     let mut writer = prog.wrap_write(writer);
     let key = GenericArray::from_slice(key);
     let cipher = Aes128::new(key);
-    let mut buf = GenericArray::<u8, U16>::default();
+    let mut buf = GenericArray::<GenericArray<u8, U16>, U8>::default();
 
     loop {
-        let read = reader.read(&mut buf)?;
-        if read < 16 {
-            writer.write_all(&buf[0..read])?;
-            break;
-        } else {
-            cipher.encrypt_block(&mut buf);
-            writer.write_all(&buf)?;
-        }
-    }
+        //Attempt to fill all buffers
+        let read = unsafe { reader.read(&mut std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 128))? };
+        //We reached EOF
+        if read < 128 {
+            let i = read / 16;
+            cipher.encrypt_blocks(&mut buf[0..i]);
+            unsafe { writer.write_all(std::slice::from_raw_parts(buf.as_ptr() as *const u8, 16 * i))?; }
 
-    prog.finish_and_clear();
-    Ok(())
+            writer.write_all(&buf[i][0..(read % 16)])?;
+            prog.finish_and_clear();
+            return Ok(())
+        }
+
+        cipher.encrypt_par_blocks(&mut buf); //Encrypt blocks instruction level parallelism
+        unsafe { writer.write_all(std::slice::from_raw_parts(buf.as_ptr() as *const u8, 128))?; }
+    }
 }
 
 /// Decrypt a reader, writing decrypted bytes to a writer
 pub fn decrypt(
-    reader: &mut impl Read,
+    reader: &mut impl BufRead,
     writer: &mut impl Write,
     key: &[u8],
     prog: bool,
@@ -59,24 +64,29 @@ pub fn decrypt(
         ),
         false => ProgressBar::hidden(),
     };
+    let writer = BufWriter::new(writer);
     let mut writer = prog.wrap_write(writer);
     let key = GenericArray::from_slice(key);
     let cipher = Aes128::new(key);
-    let mut buf = GenericArray::<u8, U16>::default();
+    let mut buf = GenericArray::<GenericArray<u8, U16>, U8>::default();
 
     loop {
-        let read = reader.read(&mut buf).unwrap();
-        if read < 16 {
-            writer.write_all(&buf[0..read]).unwrap();
-            break;
-        } else {
-            cipher.decrypt_block(&mut buf);
-            writer.write_all(&buf).unwrap();
-        }
-    }
+        //Attempt to fill all buffers
+        let read = unsafe { reader.read(&mut std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 128))? };
+        //We reached EOF
+        if read < 128 {
+            let i = read / 16;
+            cipher.decrypt_blocks(&mut buf[0..i]);
+            unsafe { writer.write_all(std::slice::from_raw_parts(buf.as_ptr() as *const u8, 16 * i))?; }
 
-    prog.finish_and_clear();
-    Ok(())
+            writer.write_all(&buf[i][0..(read % 16)])?;
+            prog.finish_and_clear();
+            return Ok(())
+        }
+
+        cipher.decrypt_par_blocks(&mut buf); //Encrypt blocks instruction level parallelism
+        unsafe { writer.write_all(std::slice::from_raw_parts(buf.as_ptr() as *const u8, 128))?; }
+    }
 }
 
 /// Encrypt a buffer in place

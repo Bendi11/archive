@@ -412,7 +412,7 @@ fn enc(args: &ArgMatches) -> BarResult<()> {
 
     let keep = args.is_present("keep-file");
 
-    let mut file = fs::OpenOptions::new().read(true).open(filename)?;
+    let mut file = std::io::BufReader::new(fs::OpenOptions::new().read(true).open(filename)?);
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -442,7 +442,7 @@ fn dec(args: &ArgMatches) -> BarResult<()> {
 
     let keep = args.is_present("keep-file");
 
-    let mut file = fs::OpenOptions::new().read(true).open(filename)?;
+    let mut file = std::io::BufReader::new(fs::OpenOptions::new().read(true).open(filename)?);
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create(true)
