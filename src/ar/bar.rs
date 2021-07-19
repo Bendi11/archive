@@ -9,7 +9,6 @@ use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rmpv::Value;
-use std::cell::Cell;
 use std::convert;
 use std::{
     cell::RefCell,
@@ -96,7 +95,6 @@ const _FILE: u8 = 3;
 const _DIR: u8 = 4;
 const OFFSET: u8 = 5;
 const SIZE: u8 = 6;
-const ENCRYPTION: u8 = 7;
 const USED: u8 = 8;
 const COMPRESSMETHOD: u8 = 9;
 
@@ -148,7 +146,7 @@ pub(super) fn ser_header(header: &Header) -> Value {
 /// Create a file value from a `File` entry
 pub(super) fn ser_fileentry(file: &entry::File) -> Value {
     use rmpv::{Integer, Utf8String};
-    let mut map = vec![
+    Value::Map(vec![
         (
             Value::Integer(Integer::from(OFFSET)),
             Value::Integer(Integer::from(file.off)),
@@ -166,21 +164,7 @@ pub(super) fn ser_fileentry(file: &entry::File) -> Value {
             Value::String(Utf8String::from(file.compression.to_string())),
         ),
 
-    ];
-    if file.is_encrypted() {
-        let nonce = match file.enc.get() {
-            entry::EncryptType::ChaCha20(nonce) => nonce,
-            _ => unreachable!()
-        };
-        map.push(
-            (
-                Value::Integer(Integer::from(ENCRYPTION)),
-                Value::Binary(nonce.to_vec())
-            )
-        )
-    }
-
-    Value::Map(map)
+    ])
 }
 
 impl Bar<io::Cursor<Vec<u8>>> {
@@ -356,7 +340,6 @@ impl<S: Read + Seek> Bar<S> {
                         off: *off,
                         size: size as u32,
                         meta: RefCell::new(meta),
-                        enc: Cell::new(entry::EncryptType::None),
                     };
                     *off += size;
                     std::io::copy(&mut read_prog.wrap_read(&mut data), writer)?;
@@ -424,14 +407,6 @@ impl<S: Read + Seek> Bar<S> {
                     BarErr::InvalidHeaderFormat("SIZE field in FILE entry is not a u64".into())
                 })? as u32,
             meta: RefCell::new(meta),
-            enc: std::cell::Cell::new(match val.get(&(ENCRYPTION as u64)) {
-                Some(nonce) => entry::EncryptType::ChaCha20(Nonce::clone_from_slice(nonce.as_slice().ok_or_else(|| {
-                    BarErr::InvalidHeaderFormat(
-                        "ENC field in FILE entry is present but is not an array".into(),
-                    )
-                })?)),
-                None => entry::EncryptType::None,
-            }),
             compression,
         })
     }
