@@ -2,15 +2,12 @@
 //!
 
 use super::entry;
-use chacha20poly1305::Nonce;
 use super::entry::Entry;
 use byteorder::{LittleEndian, ReadBytesExt};
 use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rmpv::Value;
-use std::cell::Cell;
-use std::convert;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -24,7 +21,7 @@ use thiserror::Error;
 use crate::ar::entry::{CompressMethod, CompressType, Dir, Meta};
 
 /// The `Bar` struct contains methods to read, manipulate and create `bar` files
-/// using any type that implements `Seek`, `Read` and `Write`
+/// using any type that implements `Seek` and `Read`
 pub struct Bar<S: Read + Seek> {
     /// The internal data that we read from and write to
     pub(super) data: S,
@@ -44,9 +41,6 @@ impl<S: Read + Seek> fmt::Debug for Bar<S> {
 pub struct Header {
     /// Metadata about the entire archive
     pub meta: Meta,
-
-    /// The nonce counter
-    pub nonce: Nonce,
 
     /// The root directory of the header
     pub root: Dir,
@@ -73,17 +67,11 @@ pub enum BarErr {
     #[error("The metadata file format is invalid: {0}")]
     BadMetadataFile(String),
 
-    #[error("An error occurred while encrypting/decrypting a file {0}")]
-    EncryptError(chacha20poly1305::aead::Error),
+    #[error("The bar archive is encrypted and must be unlocked")]
+    ArchiveEncrypted,
 
     #[error("The specified entry at path {0} does not exist")]
     NoEntry(String),
-}
-
-impl convert::From<chacha20poly1305::aead::Error> for BarErr {
-    fn from(e: chacha20poly1305::aead::Error) -> Self {
-        Self::EncryptError(e)
-    }
 }
 
 /// The `BarResult<T>` type is a result with an Err variant of [BarErr]
@@ -96,7 +84,6 @@ const _FILE: u8 = 3;
 const _DIR: u8 = 4;
 const OFFSET: u8 = 5;
 const SIZE: u8 = 6;
-const ENCRYPTION: u8 = 7;
 const USED: u8 = 8;
 const COMPRESSMETHOD: u8 = 9;
 
@@ -142,13 +129,13 @@ pub(super) fn ser_direntry(dir: &entry::Dir) -> Value {
 }
 
 pub(super) fn ser_header(header: &Header) -> Value {
-    Value::Array(vec![ser_meta(&header.meta), Value::Binary(header.nonce.to_vec()), ser_direntry(&header.root)])
+    Value::Array(vec![ser_meta(&header.meta), ser_direntry(&header.root)])
 }
 
 /// Create a file value from a `File` entry
 pub(super) fn ser_fileentry(file: &entry::File) -> Value {
     use rmpv::{Integer, Utf8String};
-    let mut map = vec![
+    Value::Map(vec![
         (
             Value::Integer(Integer::from(OFFSET)),
             Value::Integer(Integer::from(file.off)),
@@ -165,22 +152,7 @@ pub(super) fn ser_fileentry(file: &entry::File) -> Value {
             Value::Integer(Integer::from(COMPRESSMETHOD)),
             Value::String(Utf8String::from(file.compression.to_string())),
         ),
-
-    ];
-    if file.is_encrypted() {
-        let nonce = match file.enc.get() {
-            entry::EncryptType::ChaCha20(nonce) => nonce,
-            _ => unreachable!()
-        };
-        map.push(
-            (
-                Value::Integer(Integer::from(ENCRYPTION)),
-                Value::Binary(nonce.to_vec())
-            )
-        )
-    }
-
-    Value::Map(map)
+    ])
 }
 
 impl Bar<io::Cursor<Vec<u8>>> {
@@ -195,7 +167,6 @@ impl Bar<io::Cursor<Vec<u8>>> {
                     name: name.to_string(),
                     ..Default::default()
                 },
-                nonce: Nonce::clone_from_slice(&[0u8 ; 12]),
                 root: entry::Dir {
                     meta: RefCell::new(Meta {
                         name: "root".to_owned(),
@@ -239,42 +210,27 @@ impl<S: Read + Seek> Bar<S> {
             ser_meta(&self.header.meta),
         ));
 
-        Value::Array(vec![
-            Value::Binary(self.header.nonce.to_vec()),
-            Value::Map(vec)
-        ])
+        Value::Map(vec)
     }
 
     /// Read all entry metadata from a root file when packing a previously unpacked directory
     pub(super) fn read_all_entry_metadata(
         file: impl AsRef<std::path::Path>,
-    ) -> BarResult<(Nonce, HashMap<String, Meta>)> {
+    ) -> BarResult<HashMap<String, Meta>> {
         let mut data = match std::fs::File::open(file.as_ref()) {
             Ok(data) => data,
             Err(_) => {
-                return Ok((Nonce::clone_from_slice(&[0u8 ; 12]), HashMap::new()));
+                return Ok(HashMap::new());
             }
         };
         let val = rmpv::decode::read_value(&mut data)?;
 
-        let val = val.as_array().ok_or_else(|| {
-            BarErr::BadMetadataFile("Entry metadata file's main content is not an array".into())
-        })?;
-
-        let nonce = val.get(0).ok_or_else(|| {
-            BarErr::BadMetadataFile("Entry's metadata file header array is not long enough".into())
-        })?.as_slice().ok_or_else(|| {
-            BarErr::BadMetadataFile("Nonce of header file is not a byte slice".into())
-        })?;
-        let nonce = Nonce::clone_from_slice(nonce);
-
-        let val = val.get(1).ok_or_else(|| {
-            BarErr::BadMetadataFile("Header array is not long enough".into())
-        })?.as_map().ok_or_else(|| {
+        let val = val.as_map().ok_or_else(|| {
             BarErr::BadMetadataFile("Header map of paths to metadata is not a map".into())
         })?;
 
-        let map = val.iter()
+        let map = val
+            .iter()
             .map(|(path, meta)| -> BarResult<_> {
                 let path = path.as_str().ok_or_else(|| {
                     BarErr::BadMetadataFile("The keys for metada's map are not strings".into())
@@ -284,7 +240,7 @@ impl<S: Read + Seek> Bar<S> {
             })
             .collect::<BarResult<HashMap<String, Meta>>>()?;
 
-        Ok((nonce, map))
+        Ok(map)
     }
 
     /// Read all files in a directory into a list of [Entry]s, reading metadata files if possible
@@ -350,13 +306,11 @@ impl<S: Read + Seek> Bar<S> {
                     let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
                     let size = data.metadata()?.len();
 
-
                     let file = entry::File {
                         compression: compress,
                         off: *off,
                         size: size as u32,
                         meta: RefCell::new(meta),
-                        enc: Cell::new(entry::EncryptType::None),
                     };
                     *off += size;
                     std::io::copy(&mut read_prog.wrap_read(&mut data), writer)?;
@@ -424,14 +378,6 @@ impl<S: Read + Seek> Bar<S> {
                     BarErr::InvalidHeaderFormat("SIZE field in FILE entry is not a u64".into())
                 })? as u32,
             meta: RefCell::new(meta),
-            enc: std::cell::Cell::new(match val.get(&(ENCRYPTION as u64)) {
-                Some(nonce) => entry::EncryptType::ChaCha20(Nonce::clone_from_slice(nonce.as_slice().ok_or_else(|| {
-                    BarErr::InvalidHeaderFormat(
-                        "ENC field in FILE entry is present but is not an array".into(),
-                    )
-                })?)),
-                None => entry::EncryptType::None,
-            }),
             compression,
         })
     }
@@ -534,11 +480,11 @@ impl<S: Read + Seek> Bar<S> {
     }
 
     /// Get the position in the reader that our header data starts and return
-    /// (file data size, header size)
+    /// (file data size, header size, is_encrypted)
     pub(super) fn get_header_pos(data: &mut S) -> BarResult<(u64, u64)> {
         data.seek(SeekFrom::End(0))?; //Seek to the end of the file, then back 8 bytes
         let file_size = data.stream_position()?;
-        data.seek(SeekFrom::End(-8))?;
+        data.seek(SeekFrom::End(-9))?;
 
         let data_size = data.read_u64::<LittleEndian>()?;
         let header_size = (file_size - data_size) - 8;
@@ -560,15 +506,15 @@ impl<S: Read + Seek> Bar<S> {
                 header_val
             ))
         })?;
-        match (header_val.get(0), header_val.get(1), header_val.get(2)) {
-            (Some(metadata), Some(nonce), Some(root)) => {
+        match (header_val.get(0), header_val.get(1)) {
+            (Some(metadata), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
                 let dir = Self::read_dir_entry(root)?;
-                let nonce = nonce.as_slice().ok_or_else(|| BarErr::InvalidHeaderFormat("The nonce of the header is not a byte slice".into()))?;
-                Ok(Header { meta, root: dir, nonce: Nonce::clone_from_slice(nonce) })
+
+                Ok(Header { meta, root: dir })
             }
             _ => Err(BarErr::InvalidHeaderFormat(
-                "The top level header array does not contain three elements".into(),
+                "The top level header array does not contain four elements".into(),
             )),
         }
     }

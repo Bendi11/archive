@@ -31,8 +31,7 @@ Some constants used instead of strings to save space in maps:
 ```
 Header: Array (root) [
     <Meta>,
-    &[u8 ; 12]: Nonce counter
-    <Directory> (root dir) 
+    <Directory> (root dir),
 ]
 
 Directory: Array [

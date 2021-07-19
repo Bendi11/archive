@@ -1,2 +1,2 @@
 pub mod ar;
-pub mod cmd;
+pub mod enc;

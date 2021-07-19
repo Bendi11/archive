@@ -4,27 +4,11 @@ pub mod entry;
 use bar::{ser_header, Header};
 pub use bar::{Bar, BarErr, BarResult};
 use byteorder::{LittleEndian, WriteBytesExt};
-use chacha20poly1305::Key;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use entry::{CompressType, Entry, Meta};
 use std::cell::RefCell;
 use std::io::{self, Seek, SeekFrom, Write};
-
-fn increment_bytes(b256: &mut [u8], mut amount: u64) -> u64 {
-    let mut i = b256.len() - 1;
-
-    while amount > 0 {
-        amount += b256[i] as u64;
-        b256[i] = amount as u8;
-        amount /= 256;
-
-        if i == 0 { break; }
-        i -= 1;
-    }
-
-    amount
-}
 
 impl<S: io::Read + io::Write + io::Seek> Bar<S> {
     /// Pack an entire directory into a `Bar` struct using a given compression method for every file
@@ -44,7 +28,7 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
         let dir = dir.as_ref();
         let mut off = 0u64; //The current offset into the backing storage
 
-        let (nonce, meta) = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
+        let meta = Self::read_all_entry_metadata(dir.join(Self::ROOT_METADATA_FILE))?;
         let root_meta = if let Some(meta) = meta.get("/") {
             meta.clone()
         } else {
@@ -57,7 +41,6 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
         Ok(Self {
             header: Header {
                 meta: root_meta,
-                nonce,
                 root: entry::Dir {
                     meta: RefCell::new(Meta {
                         name: "root".to_owned(),
@@ -79,26 +62,23 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
             data: backend,
         })
     }
-
-    /// Encrypt a file using the given key, if the file is already encrypted then this is a no op
-    #[inline]
-    pub fn encrypt(&mut self, file: &entry::File, password: &Key) -> BarResult<()> {
-        file.encrypt(password, &self.header.nonce, &mut self.data)?;
-        increment_bytes(&mut self.header.nonce, 1); //Increment our nonce counter by 1
-        Ok(())
-    }
-
-    /// Decrypt a file using the given key 
-    #[inline]
-    pub fn decrypt(&mut self, file: &entry::File, password: &Key) -> BarResult<()> {
-        file.decrypt(password, &mut self.data)
-    }
 }
 
 impl<S: io::Read + io::Seek> Bar<S> {
     /// Get the metadata of this bar archive
     pub fn meta(&self) -> &Meta {
         &self.header.meta
+    }
+
+    /// Unpack a packed archive from a file or other storage, like an in-memory byte array.
+    /// See also [unpack](fn@Bar::unpack)
+    pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
+        let header = Self::read_header(&mut storage)?;
+
+        Ok(Self {
+            header,
+            data: storage,
+        })
     }
 
     /// Get a reference to an entry in the Bar archive. This should
@@ -203,16 +183,6 @@ impl<S: io::Read + io::Seek> Bar<S> {
         Ok(())
     }
 
-    /// Unpack a packed archive from a file or other storage, like an in-memory byte array.
-    /// See also [unpack](fn@Bar::unpack)
-    pub fn unpack_reader(mut storage: S) -> BarResult<Self> {
-        let header = Self::read_header(&mut storage)?;
-        Ok(Self {
-            header,
-            data: storage,
-        })
-    }
-
     /// Return the root folder of the archive that contains all subfolders and files
     #[inline]
     #[must_use]
@@ -227,7 +197,7 @@ impl<S: io::Read + io::Seek> Bar<S> {
 
     /// Return a mutable iterator over all entries in the archive
     #[inline]
-    pub fn entries_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut Entry> {
+    pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut Entry> {
         self.header.root.entries_mut()
     }
 
@@ -292,9 +262,9 @@ impl Bar<std::fs::File> {
     /// header entries.
     /// ## Example
     /// ```no_run
-    /// # use bar::Bar;
+    /// # use ::bar::Bar;
     /// # fn main() {
-    /// let archive = Bar::unpack("./archive.bar").unwrap();
+    /// let archive = Bar::unpack("./archive.bar", true).unwrap();
     /// # }
     /// ```
     pub fn unpack(file: impl AsRef<std::path::Path>) -> BarResult<Self> {

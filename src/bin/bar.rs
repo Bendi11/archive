@@ -1,6 +1,9 @@
-use bar::ar::{
-    entry::{self, Entry},
-    Bar, BarErr, BarResult,
+use bar::{
+    ar::{
+        entry::{self, Entry},
+        Bar, BarErr, BarResult,
+    },
+    enc,
 };
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
 use console::{style, Color, Style};
@@ -100,8 +103,7 @@ fn meta_subcommand() -> App<'static, 'static> {
             Arg::with_name("entry-paths")
                 .help("A list of paths to fetch the metadata of")
                 .multiple(true)
-                .takes_value(true)
-                .required(true),
+                .takes_value(true),
         )
 }
 
@@ -231,30 +233,67 @@ fn search_subcommand() -> App<'static, 'static> {
         )
 }
 
-fn encrypt_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("crypt")
+fn enc_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("enc")
         .visible_alias("lock")
-        .about("Encrypt / decrypt a list of files from the archive")
-        .arg(input_archive_arg())
-        .arg(Arg::with_name("entries")
-            .multiple(true)
+        .about("Encrypt any file's data using the AES-128 encryption algorithm")
+        .arg(Arg::with_name("input-file")
+            .help("A full or relative path to an input file to encrypt")
             .takes_value(true)
             .required(true)
-            .help("A list of entries to encrypt / decrypt from the archive")
+            .allow_hyphen_values(true)
+            .validator(file_exists)
         )
-        .arg(Arg::with_name("one-password")
-            .help("If only one password is desired for all files, then enable this option")
+        .arg(Arg::with_name("output-file")
+            .help("A full or relative path that will be used to write encrypted data to")
             .takes_value(true)
-            .short("p")
-            .long("password")
+            .multiple(false)
+            .allow_hyphen_values(true)
+            .required(true)
+        )
+        .arg(Arg::with_name("password")
+            .help("A password for the encrypted file, this will be trimmed to 16 bytes if it is longer and padded if it is shorter")
+            .required(true)
+            .allow_hyphen_values(true)
             .multiple(false)
         )
-        .arg(Arg::with_name("decrypt")
-            .help("Enable this option to decrypt files instead of encrypting them")
-            .short("d")
-            .long("decrypt")
+        .arg(Arg::with_name("keep-file")
             .takes_value(false)
+            .short("k")
+            .long("keep")
+            .help("Pass this flag to keep the old unencrypted file instead of deleting it")
+        )
+}
+
+fn dec_subcommand() -> App<'static, 'static> {
+    SubCommand::with_name("dec")
+        .visible_alias("unlock")
+        .about("Decrypt any file's data using the AES-128 encryption algorithm")
+        .arg(Arg::with_name("input-file")
+            .help("A full or relative path to an input file to decrypt")
+            .takes_value(true)
+            .required(true)
+            .allow_hyphen_values(true)
+            .validator(file_exists)
+        )
+        .arg(Arg::with_name("output-file")
+            .help("A full or relative path that will be used to write decrypted data to")
+            .takes_value(true)
             .multiple(false)
+            .allow_hyphen_values(true)
+            .required(true)
+        )
+        .arg(Arg::with_name("password")
+            .help("A password for the encrypted file file, this will be trimmed to 16 bytes if it is longer and padded if it is shorter")
+            .required(true)
+            .allow_hyphen_values(true)
+            .multiple(false)
+        )
+        .arg(Arg::with_name("keep-file")
+            .takes_value(false)
+            .short("k")
+            .long("keep")
+            .help("Pass this flag to keep the old encrypted file instead of deleting it")
         )
 }
 
@@ -283,18 +322,10 @@ fn print_entry(entry: &Entry) {
                 style(format!("compression: {}", file.compression().to_string())).italic()
             );
 
-            if file.is_encrypted() {
-                println!(
-                    "{}",
-                    style("encrypted").red(),
-                );
-            }
-
             //Guess the file type from extension
-            match mime_guess::from_path(&file.meta.borrow().name).first() {
-                Some(mime) => println!("mime type (from extension): {}", mime.essence_str()),
-                None => (),
-            };
+            if let Some(mime) = mime_guess::from_path(&file.meta.borrow().name).first() {
+                println!("mime type (from extension): {}", mime.essence_str());
+            }
             &file.meta
         }
         Entry::Dir(dir) => {
@@ -340,7 +371,8 @@ fn main() {
         .subcommand(extract_subcommand())
         .subcommand(edit_subcommand())
         .subcommand(search_subcommand())
-        .subcommand(encrypt_subcommand());
+        .subcommand(enc_subcommand())
+        .subcommand(dec_subcommand());
 
     let matches = app.get_matches();
     match match matches.subcommand() {
@@ -351,7 +383,8 @@ fn main() {
         ("extract", Some(args)) => extract(args),
         ("edit", Some(args)) => edit(args),
         ("search", Some(args)) => search(args),
-        ("crypt", Some(args)) => crypt(args),
+        ("enc", Some(args)) => enc(args),
+        ("dec", Some(args)) => dec(args),
         _ => unreachable!(),
     } {
         Ok(()) => (),
@@ -370,45 +403,53 @@ fn main() {
     }
 }
 
-fn crypt(args: &ArgMatches) -> BarResult<()> {
-    use chacha20poly1305::Key;
-    let mut bar = Bar::unpack(args.value_of("input-file").unwrap())?;
+/// Encrypt any file using the given password
+fn enc(args: &ArgMatches) -> BarResult<()> {
+    let filename = args.value_of("input-file").unwrap();
+    let output = args.value_of("output-file").unwrap();
+    let mut password = args.value_of("password").unwrap().to_owned();
+    password.push_str("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
 
-    for name in args.values_of("entries").unwrap() {
-        let entry = match get_entry_or_search(bar.root(), name)
-            .as_file() {
-                Some(file) => file,
-                None => {
-                    eprintln!("{}", style(format!("Entry {} is a directory, not a file", name)).red());
-                    continue
-                },
-            };
+    let keep = args.is_present("keep-file");
 
-        match args.value_of("one-password") {
-            Some(pass) => {
-                let mut pass = pass.as_bytes().to_vec();
-                pass.extend_from_slice(&[0u8 ; 32]);
-                pass.truncate(32);
-                match args.is_present("decrypt") {
-                false => bar.encrypt(entry, Key::from_slice(pass.as_slice())),
-                true => bar.decrypt(entry, Key::from_slice(pass.as_slice())),
-            }
-        }
-            None => {
-                let mut pass = rustyline::Editor::<()>::new()
-                    .readline(&*format!("Password for file {}: ", name)).unwrap().as_bytes().to_vec();
+    let mut file = fs::OpenOptions::new().read(true).open(filename)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)?;
 
-                pass.extend_from_slice(&[0u8 ; 32]);
-                pass.truncate(32);
-                match args.is_present("decrypt") {
-                    false => bar.encrypt(entry, Key::from_slice(pass.as_slice())),
-                    true => bar.decrypt(entry, Key::from_slice(pass.as_slice())),
-                }
-            }
-        }?
+    enc::encrypt(&mut file, &mut output, &password.as_bytes()[0..16])?;
+    if !keep {
+        drop(file);
+        fs::remove_file(filename)?;
     }
 
-    bar.save_updated(!args.is_present("no-prog"))?;
+    Ok(())
+}
+
+/// Decrypt any file using the given password
+fn dec(args: &ArgMatches) -> BarResult<()> {
+    let filename = args.value_of("input-file").unwrap();
+    let output = args.value_of("output-file").unwrap();
+    let mut password = args.value_of("password").unwrap().to_owned();
+    password.push_str("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+
+    let keep = args.is_present("keep-file");
+
+    let mut file = fs::OpenOptions::new().read(true).open(filename)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)?;
+
+    enc::decrypt(&mut file, &mut output, &password.as_bytes()[0..16])?;
+    if !keep {
+        drop(file);
+        fs::remove_file(filename)?;
+    }
+
     Ok(())
 }
 
@@ -447,11 +488,18 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
     let bar = Bar::unpack(args.value_of("input-file").unwrap())?;
     let cols = console::Term::stdout().size().1;
 
-    for arg in args.values_of("entry-paths").unwrap() {
-        println!("{}", "=".repeat(cols as usize));
+    if !args.is_present("entry-paths") {
+        println!("{}", style(format!("Archive {}", bar.meta().name)).bold());
+        if let Some(ref note) = bar.meta().note {
+            println!("{}{}", style("note: ").italic(), note);
+        }
+    } else {
+        for arg in args.values_of("entry-paths").unwrap() {
+            println!("{}", "=".repeat(cols as usize));
 
-        let entry = get_entry_or_search(bar.root(), arg);
-        print_entry(entry);
+            let entry = get_entry_or_search(bar.root(), arg);
+            print_entry(entry);
+        }
     }
 
     Ok(())
@@ -606,9 +654,8 @@ fn edit(args: &ArgMatches) -> BarResult<()> {
                     Ok(e) => e,
                 };
 
-                if edit.contains(|c| match c {
-                    '/' | '\\' | '<' | '>' | ':' | '\"' | '|' | '?' | '*' => true,
-                    _ => false,
+                if edit.contains(|c| {
+                    matches!(c, '/' | '\\' | '<' | '>' | ':' | '\"' | '|' | '?' | '*')
                 }) | edit.ends_with('.')
                     | edit.ends_with(' ')
                 {
