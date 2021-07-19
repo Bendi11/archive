@@ -100,7 +100,7 @@ fn meta_subcommand() -> App<'static, 'static> {
             Arg::with_name("entry-paths")
                 .help("A list of paths to fetch the metadata of")
                 .multiple(true)
-                .takes_value(true)
+                .takes_value(true),
         )
 }
 
@@ -373,16 +373,14 @@ fn meta(args: &ArgMatches) -> BarResult<()> {
         if let Some(ref note) = bar.meta().note {
             println!("{}{}", style("note: ").italic(), note);
         }
-    }
-    else {
+    } else {
         for arg in args.values_of("entry-paths").unwrap() {
             println!("{}", "=".repeat(cols as usize));
-    
+
             let entry = get_entry_or_search(bar.root(), arg);
             print_entry(entry);
         }
     }
-    
 
     Ok(())
 }

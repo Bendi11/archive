@@ -62,7 +62,6 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
             data: backend,
         })
     }
-
 }
 
 impl<S: io::Read + io::Seek> Bar<S> {

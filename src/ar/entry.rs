@@ -1,7 +1,12 @@
 use chacha20poly1305::Nonce;
 use flate2::write::{DeflateEncoder, GzEncoder};
 use indicatif::ProgressBar;
-use std::{cell::RefCell, collections::HashMap, io::{Read, Seek, SeekFrom, Write}, path};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    io::{Read, Seek, SeekFrom, Write},
+    path,
+};
 
 /// The `CompressMethod` represents all ways that a [File]'s data can be compressed in the archive
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

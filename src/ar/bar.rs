@@ -159,7 +159,6 @@ pub(super) fn ser_fileentry(file: &entry::File) -> Value {
             Value::Integer(Integer::from(COMPRESSMETHOD)),
             Value::String(Utf8String::from(file.compression.to_string())),
         ),
-
     ])
 }
 
@@ -218,7 +217,6 @@ impl<S: Read + Seek> Bar<S> {
             ser_meta(&self.header.meta),
         ));
 
-
         Value::Map(vec)
     }
 
@@ -238,7 +236,8 @@ impl<S: Read + Seek> Bar<S> {
             BarErr::BadMetadataFile("Header map of paths to metadata is not a map".into())
         })?;
 
-        let map = val.iter()
+        let map = val
+            .iter()
             .map(|(path, meta)| -> BarResult<_> {
                 let path = path.as_str().ok_or_else(|| {
                     BarErr::BadMetadataFile("The keys for metada's map are not strings".into())
@@ -313,7 +312,6 @@ impl<S: Read + Seek> Bar<S> {
 
                     let mut data = std::fs::File::open(file.path())?; //Open the file at the given location
                     let size = data.metadata()?.len();
-
 
                     let file = entry::File {
                         compression: compress,
@@ -519,7 +517,7 @@ impl<S: Read + Seek> Bar<S> {
             (Some(metadata), Some(root)) => {
                 let meta = Self::read_meta(metadata)?; //Get the metadata of the header
                 let dir = Self::read_dir_entry(root)?;
-                Ok(Header { meta, root: dir})
+                Ok(Header { meta, root: dir })
             }
             _ => Err(BarErr::InvalidHeaderFormat(
                 "The top level header array does not contain three elements".into(),
