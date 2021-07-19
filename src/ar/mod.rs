@@ -262,7 +262,7 @@ impl Bar<std::fs::File> {
     /// header entries.
     /// ## Example
     /// ```no_run
-    /// # use bar::Bar;
+    /// # use ::bar::Bar;
     /// # fn main() {
     /// let archive = Bar::unpack("./archive.bar", true).unwrap();
     /// # }

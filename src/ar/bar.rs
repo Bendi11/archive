@@ -8,7 +8,6 @@ use flate2::read::{DeflateDecoder, GzDecoder};
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rmpv::Value;
-use std::convert;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -68,20 +67,8 @@ pub enum BarErr {
     #[error("The metadata file format is invalid: {0}")]
     BadMetadataFile(String),
 
-    #[error("An error occurred while encrypting/decrypting a file {0}")]
-    EncryptError(chacha20poly1305::aead::Error),
-
-    #[error("Packed bar archive is encrypted and cannot be opened without a password")]
-    FileEncrypted,
-
     #[error("The specified entry at path {0} does not exist")]
     NoEntry(String),
-}
-
-impl convert::From<chacha20poly1305::aead::Error> for BarErr {
-    fn from(e: chacha20poly1305::aead::Error) -> Self {
-        Self::EncryptError(e)
-    }
 }
 
 /// The `BarResult<T>` type is a result with an Err variant of [BarErr]
