@@ -31,6 +31,8 @@ Some constants used instead of strings to save space in maps:
 ```
 Header: Array (root) [
     <Meta>,
+    u8: If archive is encrypted, and what encryption type
+    Binary: size determined by the previous u8, will be a nonce if the encryption type requires it
     <Directory> (root dir) 
 ]
 

@@ -58,6 +58,7 @@ impl<S: io::Read + io::Write + io::Seek> Bar<S> {
                     .map(|entry| (entry.name(), entry))
                     .collect(),
                 },
+                enc: Default::default()
             },
             data: backend,
         })

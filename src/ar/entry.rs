@@ -1,4 +1,3 @@
-use chacha20poly1305::Nonce;
 use flate2::write::{DeflateEncoder, GzEncoder};
 use indicatif::ProgressBar;
 use std::{
@@ -83,22 +82,6 @@ pub struct Meta {
     pub name: String,
 }
 
-/// The `EncryptType` enum is stored in the [File] struct and specifies what kind of encryption + nonce if any
-/// is present for the file
-#[derive(Clone, Debug, Copy)]
-pub enum EncryptType {
-    /// ChaCha20 with nonce bytes
-    ChaCha20(Nonce),
-
-    /// No encryption
-    None,
-}
-
-impl Default for EncryptType {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 /// The `File` entry is used in the [File](Entry::File) entry variant and contains all possible metadata like notes,
 #[derive(Debug, Clone)]
