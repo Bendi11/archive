@@ -480,11 +480,11 @@ impl<S: Read + Seek> Bar<S> {
     }
 
     /// Get the position in the reader that our header data starts and return
-    /// (file data size, header size, is_encrypted)
+    /// (file data size, header size)
     pub(super) fn get_header_pos(data: &mut S) -> BarResult<(u64, u64)> {
         data.seek(SeekFrom::End(0))?; //Seek to the end of the file, then back 8 bytes
         let file_size = data.stream_position()?;
-        data.seek(SeekFrom::End(-9))?;
+        data.seek(SeekFrom::End(-8))?;
 
         let data_size = data.read_u64::<LittleEndian>()?;
         let header_size = (file_size - data_size) - 8;
