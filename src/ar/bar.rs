@@ -22,7 +22,7 @@ use thiserror::Error;
 use crate::ar::entry::{CompressMethod, CompressType, Dir, Meta};
 
 /// The `Bar` struct contains methods to read, manipulate and create `bar` files
-/// using any type that implements `Seek`, `Read` and `Write`
+/// using any type that implements `Seek` and `Read`
 pub struct Bar<S: Read + Seek> {
     /// The internal data that we read from and write to
     pub(super) data: S,
