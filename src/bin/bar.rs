@@ -419,7 +419,12 @@ fn enc(args: &ArgMatches) -> BarResult<()> {
         .truncate(true)
         .open(output)?;
 
-    enc::encrypt(&mut file, &mut output, &password.as_bytes()[0..16], !args.is_present("no-prog"))?;
+    enc::encrypt(
+        &mut file,
+        &mut output,
+        &password.as_bytes()[0..16],
+        !args.is_present("no-prog"),
+    )?;
     if !keep {
         drop(file);
         fs::remove_file(filename)?;
@@ -444,7 +449,12 @@ fn dec(args: &ArgMatches) -> BarResult<()> {
         .truncate(true)
         .open(output)?;
 
-    enc::decrypt(&mut file, &mut output, &password.as_bytes()[0..16], !args.is_present("no-prog"))?;
+    enc::decrypt(
+        &mut file,
+        &mut output,
+        &password.as_bytes()[0..16],
+        !args.is_present("no-prog"),
+    )?;
     if !keep {
         drop(file);
         fs::remove_file(filename)?;
