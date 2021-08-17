@@ -5,7 +5,7 @@ use bar::{
     },
     enc,
 };
-use clap::{crate_version, App, AppSettings, Arg, ArgMatches, SubCommand};
+use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use console::{style, Color, Style};
 use dialoguer::theme::ColorfulTheme;
 use indicatif::HumanBytes;
@@ -17,10 +17,10 @@ use sublime_fuzzy::best_match;
 
 /// An positional argument with the name "input-file" that validates that its argument exists and only takes one
 /// value
-fn input_archive_arg() -> Arg<'static, 'static> {
-    Arg::with_name("input-file")
-        .help("A full or relative path to an input bar archive")
-        .long_help("A full or relative path from the current working directory to an input bar formatted archive")
+fn input_archive_arg() -> Arg<'static> {
+    Arg::new("input-file")
+        .about("A full or relative path to an input bar archive")
+        .long_about("A full or relative path from the current working directory to an input bar formatted archive")
         .required(true)
         .takes_value(true)
         .multiple(false)
@@ -47,19 +47,19 @@ fn output_dir_arg() -> Arg<'static, 'static> {
 }
 
 /// Create the `pack` subcommand
-fn pack_subcommand() -> App<'static, 'static> {
+fn pack_subcommand() -> App<'static> {
     SubCommand::with_name("pack")
         .about("Pack a directory into an archive")
         .long_about("Pack a directory into a bar formatted archive. If the folder contains a metadata file (.__barmeta.msgpack), then metadata will be preserved")
         .visible_alias("p")
-        .arg(Arg::with_name("input-dir")
+        .arg(Arg::new("input-dir")
             .required(true)
             .multiple(false)
             .takes_value(true)
-            .help("Choose a full or relative path to the directory that will be compressed into an archive")
+            .about("Choose a full or relative path to the directory that will be compressed into an archive")
             .validator(file_exists)
         )   
-        .arg(Arg::with_name("output-file")
+        .arg(Arg::new("output-file")
             .required(true)
             .takes_value(true)
             .multiple(false)

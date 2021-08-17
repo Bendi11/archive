@@ -17,7 +17,7 @@ indicatif = "0.16.2" # For progress bar display in benchmarks and tests
 console = "0.14" # For console formatting in terminal applications
 dialoguer = "0.8" # For input menus
 
-clap = "2.33" # For binaries that take command line arguments
+clap = { version = "3.0.0-beta.4", features = ["color"] } # For binaries that take command line arguments
 byteorder = "1.4" # For reading u64s in an easier and platform agnostic way
 tempfile = "3.2" # For backing storage of archives
 flate2 = "1.0" # For compressing files individually in archive
