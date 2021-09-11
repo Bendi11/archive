@@ -23,38 +23,35 @@ fn input_archive_arg() -> Arg<'static> {
         .long_about("A full or relative path from the current working directory to an input bar formatted archive")
         .required(true)
         .takes_value(true)
-        .multiple(false)
         .validator(file_exists)
 }
 
 /// Validator for path inputs
-fn file_exists(s: String) -> Result<(), String> {
-    match Path::new(&s).exists() {
+fn file_exists(s: &str) -> Result<(), String> {
+    match Path::new(s).exists() {
         true => Ok(()),
         false => Err(format!("The file or directory at {} does not exist", s)),
     }
 }
 
 /// Output directory positional argument
-fn output_dir_arg() -> Arg<'static, 'static> {
-    Arg::with_name("output-dir")
-        .help("Select a full or relative path to the directory that output files will be written to. Requires the directory to exist")
+fn output_dir_arg() -> Arg<'static> {
+    Arg::new("output-dir")
+        .about("Select a full or relative path to the directory that output files will be written to. Requires the directory to exist")
         .next_line_help(true)
         .takes_value(true)
-        .multiple(false)
         .required(true)
         .validator(file_exists)
 }
 
 /// Create the `pack` subcommand
 fn pack_subcommand() -> App<'static> {
-    SubCommand::with_name("pack")
+    App::new("pack")
         .about("Pack a directory into an archive")
         .long_about("Pack a directory into a bar formatted archive. If the folder contains a metadata file (.__barmeta.msgpack), then metadata will be preserved")
         .visible_alias("p")
         .arg(Arg::new("input-dir")
             .required(true)
-            .multiple(false)
             .takes_value(true)
             .about("Choose a full or relative path to the directory that will be compressed into an archive")
             .validator(file_exists)
@@ -62,15 +59,14 @@ fn pack_subcommand() -> App<'static> {
         .arg(Arg::new("output-file")
             .required(true)
             .takes_value(true)
-            .multiple(false)
-            .help("Path to the finished output archive file (careful, if a file already exists, it will be deleted)")
+            .multiple_occurrences(false)
+            .about("Path to the finished output archive file (careful, if a file already exists, it will be deleted)")
         )
-        .arg(Arg::with_name("compression")
+        .arg(Arg::new("compression")
             .takes_value(true)
-            .multiple(false)
             .long("compression")
-            .short("c")
-            .help("Select a compression method and quality")
+            .short('c')
+            .about("Select a compression method and quality")
             .possible_values(&[
                 "high-gzip",
                 "high-deflate",
@@ -84,8 +80,8 @@ fn pack_subcommand() -> App<'static> {
         )
 }
 
-fn unpack_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("unpack")
+fn unpack_subcommand() -> App<'static> {
+    App::new("unpack")
         .visible_alias("u")
         .about("Unpack a .bar archive into a directory")
         .long_about("Unpack a packed .bar archive into a directory. A folder in the output-dir argument will be created with the name of the archive")
@@ -93,113 +89,107 @@ fn unpack_subcommand() -> App<'static, 'static> {
         .arg(output_dir_arg())
 }
 
-fn meta_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("view")
+fn meta_subcommand() -> App<'static> {
+    App::new("view")
         .about("View metadata of one/many files or directories")
         .visible_alias("m")
         .visible_alias("meta")
         .arg(input_archive_arg())
         .arg(
-            Arg::with_name("entry-paths")
-                .help("A list of paths to fetch the metadata of")
-                .multiple(true)
+            Arg::new("entry-paths")
+                .about("A list of paths to fetch the metadata of")
+                .multiple_values(true)
                 .takes_value(true),
         )
 }
 
-fn tree_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("tree")
+fn tree_subcommand() -> App<'static> {
+    App::new("tree")
         .visible_alias("t")
         .visible_alias("ls")
         .about("Show the directory tree of the archive")
         .arg(input_archive_arg())
         .arg(
-            Arg::with_name("dir")
-                .help("Select the directory to view a directory tree of")
-                .multiple(false)
+            Arg::new("dir")
+                .about("Select the directory to view a directory tree of")
                 .allow_hyphen_values(true)
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("recursive")
-                .help("If enabled, subdirectories will be searched recursively")
+            Arg::new("recursive")
+                .about("If enabled, subdirectories will be searched recursively")
                 .takes_value(false)
-                .short("r")
+                .short('r')
                 .long("recursive")
-                .multiple(false),
         )
 }
 
-fn extract_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("extract")
+fn extract_subcommand() -> App<'static> {
+    App::new("extract")
         .about("Extract a file from a packed archive")
         .arg(input_archive_arg())
         .arg(output_dir_arg())
         .visible_alias("e")
-        .arg(Arg::with_name("decompress")
-            .short("d")
+        .arg(Arg::new("decompress")
+            .short('d')
             .long("decompress")
-            .help("Decompress files [on/true] or extract their compressed data without decompressing [off/false]")
+            .about("Decompress files [on/true] or extract their compressed data without decompressing [off/false]")
             .default_value("on")
             .possible_values(&["on", "true", "off", "false"])
-            .multiple(false)
             .takes_value(true)
         )
-        .arg(Arg::with_name("extracted-files")
-            .help("A list of files to extract from the archive file")
-            .multiple(true)
+        .arg(Arg::new("extracted-files")
+            .about("A list of files to extract from the archive file")
+            .multiple_values(true)
             .takes_value(true)
             .required(true)
             .allow_hyphen_values(true)
         )
-        .arg(Arg::with_name("update-as-used")
-            .help("Select wether to update the extracted file's metadata as used")
+        .arg(Arg::new("update-as-used")
+            .about("Select wether to update the extracted file's metadata as used")
             .takes_value(false)
             .required(false)
             .long("consume")
-            .short("c")
+            .short('c')
         )
-        .arg(Arg::with_name("recursive")
-            .help("If an extracted entry is a folder, select wether subfolders will also be extracted")
+        .arg(Arg::new("recursive")
+            .about("If an extracted entry is a folder, select wether subfolders will also be extracted")
             .long("recursive")
-            .short("r")
+            .short('r')
             .takes_value(false)
-            .multiple(false)
         )
 }
 
-fn edit_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("edit")
+fn edit_subcommand() -> App<'static> {
+    App::new("edit")
         .visible_alias("ed")
         .about("View or edit a specific entry's metadata like notes, use, and name")
         .arg(input_archive_arg())
         .arg(
-            Arg::with_name("entry")
-                .help("Path to a file or directory in the archive to edit the metadata of")
+            Arg::new("entry")
+                .about("Path to a file or directory in the archive to edit the metadata of")
                 .required(true)
-                .multiple(false)
                 .takes_value(true),
         )
 }
 
-fn search_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("search")
+fn search_subcommand() -> App<'static> {
+    App::new("search")
         .visible_alias("find")
         .visible_alias("fuzzy")
         .about("Fuzzy search for a file or directory within the archive")
         .arg(input_archive_arg())
         .arg(
-            Arg::with_name("query")
+            Arg::new("query")
                 .allow_hyphen_values(true)
                 .required(true)
-                .multiple(false)
-                .help("Query string to fuzzy search with"),
+                .about("Query string to fuzzy search with"),
         )
         .arg(
-            Arg::with_name("max-results")
-                .short("m")
+            Arg::new("max-results")
+                .short('m')
                 .long("max-results")
-                .help("Adjust the maximum number of results shown per search")
+                .about("Adjust the maximum number of results shown per search")
                 .default_value("3")
                 .validator(|s| match s.parse::<u32>() {
                     Ok(_) => Ok(()),
@@ -207,93 +197,86 @@ fn search_subcommand() -> App<'static, 'static> {
                         Err("The maximum number of results value must be a number".to_owned())
                     }
                 })
-                .multiple(false)
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("search-dir")
-                .help("A directory in the archive to search from")
+            Arg::new("search-dir")
+                .about("A directory in the archive to search from")
                 .takes_value(true)
-                .multiple(false)
-                .short("d")
+                .short('d')
                 .long("search-dir"),
         )
         .arg(
-            Arg::with_name("min-score")
-                .help("Select the minimum score for an entry to be included")
+            Arg::new("min-score")
+                .about("Select the minimum score for an entry to be included")
                 .long("min")
                 .takes_value(true)
                 .validator(|s| match s.parse::<isize>() {
                     Ok(_) => Ok(()),
                     Err(_) => Err("The minimum score value must be a number".to_owned()),
                 })
-                .multiple(false)
                 .default_value("0")
                 .allow_hyphen_values(true),
         )
 }
 
-fn enc_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("enc")
+fn enc_subcommand() -> App<'static> {
+    App::new("enc")
         .visible_alias("lock")
         .about("Encrypt any file's data using the AES-128 encryption algorithm")
-        .arg(Arg::with_name("input-file")
-            .help("A full or relative path to an input file to encrypt")
+        .arg(Arg::new("input-file")
+            .about("A full or relative path to an input file to encrypt")
             .takes_value(true)
             .required(true)
             .allow_hyphen_values(true)
             .validator(file_exists)
         )
-        .arg(Arg::with_name("output-file")
-            .help("A full or relative path that will be used to write encrypted data to")
+        .arg(Arg::new("output-file")
+            .about("A full or relative path that will be used to write encrypted data to")
             .takes_value(true)
-            .multiple(false)
             .allow_hyphen_values(true)
             .required(true)
         )
-        .arg(Arg::with_name("password")
-            .help("A password for the encrypted file, this will be trimmed to 16 bytes if it is longer and padded if it is shorter")
+        .arg(Arg::new("password")
+            .about("A password for the encrypted file, this will be trimmed to 16 bytes if it is longer and padded if it is shorter")
             .required(true)
             .allow_hyphen_values(true)
-            .multiple(false)
         )
-        .arg(Arg::with_name("keep-file")
+        .arg(Arg::new("keep-file")
             .takes_value(false)
-            .short("k")
+            .short('k')
             .long("keep")
-            .help("Pass this flag to keep the old unencrypted file instead of deleting it")
+            .about("Pass this flag to keep the old unencrypted file instead of deleting it")
         )
 }
 
-fn dec_subcommand() -> App<'static, 'static> {
-    SubCommand::with_name("dec")
+fn dec_subcommand() -> App<'static> {
+    App::new("dec")
         .visible_alias("unlock")
         .about("Decrypt any file's data using the AES-128 encryption algorithm")
-        .arg(Arg::with_name("input-file")
-            .help("A full or relative path to an input file to decrypt")
+        .arg(Arg::new("input-file")
+            .about("A full or relative path to an input file to decrypt")
             .takes_value(true)
             .required(true)
             .allow_hyphen_values(true)
             .validator(file_exists)
         )
-        .arg(Arg::with_name("output-file")
-            .help("A full or relative path that will be used to write decrypted data to")
+        .arg(Arg::new("output-file")
+            .about("A full or relative path that will be used to write decrypted data to")
             .takes_value(true)
-            .multiple(false)
             .allow_hyphen_values(true)
             .required(true)
         )
-        .arg(Arg::with_name("password")
-            .help("A password for the encrypted file file, this will be trimmed to 16 bytes if it is longer and padded if it is shorter")
+        .arg(Arg::new("password")
+            .about("A password for the encrypted file file, this will be trimmed to 16 bytes if it is longer and padded if it is shorter")
             .required(true)
             .allow_hyphen_values(true)
-            .multiple(false)
         )
-        .arg(Arg::with_name("keep-file")
+        .arg(Arg::new("keep-file")
             .takes_value(false)
-            .short("k")
+            .short('k')
             .long("keep")
-            .help("Pass this flag to keep the old encrypted file instead of deleting it")
+            .about("Pass this flag to keep the old encrypted file instead of deleting it")
         )
 }
 
@@ -353,14 +336,15 @@ fn print_entry(entry: &Entry) {
 fn main() {
     let app = App::new("bar")
         .about("A utility to pack, unpack, and manipulate .bar archives")
+        .global_setting(AppSettings::ColorAuto)
+        .global_setting(AppSettings::ColoredHelp)
         .author("Bendi11")
         .version(crate_version!())
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .arg(
-            Arg::with_name("no-prog")
+            Arg::new("no-prog")
                 .long("no-prog")
-                .help("Disable progress bar rendering for all operations")
-                .multiple(false)
+                .about("Disable progress bar rendering for all operations")
                 .takes_value(false)
                 .global(true),
         )
@@ -376,15 +360,15 @@ fn main() {
 
     let matches = app.get_matches();
     match match matches.subcommand() {
-        ("pack", Some(args)) => pack(args),
-        ("unpack", Some(args)) => unpack(args),
-        ("view", Some(args)) => meta(args),
-        ("tree", Some(args)) => tree(args),
-        ("extract", Some(args)) => extract(args),
-        ("edit", Some(args)) => edit(args),
-        ("search", Some(args)) => search(args),
-        ("enc", Some(args)) => enc(args),
-        ("dec", Some(args)) => dec(args),
+        Some(("pack", args)) => pack(args),
+        Some(("unpack", args)) => unpack(args),
+        Some(("view", args)) => meta(args),
+        Some(("tree", args)) => tree(args),
+        Some(("extract", args)) => extract(args),
+        Some(("edit", args)) => edit(args),
+        Some(("search", args)) => search(args),
+        Some(("enc", args)) => enc(args),
+        Some(("dec", args)) => dec(args),
         _ => unreachable!(),
     } {
         Ok(()) => (),
@@ -393,7 +377,7 @@ fn main() {
                 "{}{}",
                 style(format!(
                     "An error occurred in subcommand {}: ",
-                    matches.subcommand().0
+                    matches.subcommand().unwrap().0
                 ))
                 .bold()
                 .white(),
